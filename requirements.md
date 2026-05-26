@@ -257,6 +257,25 @@ This is the complete v1 surface. Total: **32 endpoint files** under `/var/www/ht
 
 All endpoints require a valid bearer token (§1.4) unless explicitly noted.
 
+### 4.0 Live-schema mapping (verified against the `zozocal` DB, 2026-05-26)
+
+The original draft above assumed table/column names (`subjects.label`, `subject_verbs`,
+`api_tokens.revoked_at`) that **do not exist** in the live database. Endpoints are built
+against the real schema; the public JSON contract is preserved by aliasing in SQL.
+
+| API field / concept | Live DB source |
+|---|---|
+| `subjects` resource | table `maludb_subject` |
+| subject `id` | `maludb_subject.subject_id` (bigint; **no sequence/default** — new ids derived as `MAX(subject_id)+1` at insert) |
+| subject `label` | `maludb_subject.canonical_name` (aliased `canonical_name AS label`) |
+| subject `type` | `maludb_subject.subject_type` |
+| subject `description`, `classifier_md` | same column names |
+| `verbs` resource | table `maludb_verb` (`verb_id`, `canonical_name`, `verb_type`, …) |
+| subject↔verb links / `linked_verbs` | `maludb_subject_verb`, keyed by **text** (`subject_name`, `verb_name`); `linked_verbs` = `count(*) WHERE subject_name = canonical_name` |
+| subject types / verb types | `maludb_subject_type` / `maludb_verb_type` |
+| **Auth** (§1.4) | `api_tokens` has **no `revoked_at`/`token_prefix`/`last_used_at`**; it has `expires_at` (NOT NULL), `restaurant_id`, `device_name`. Validation is `WHERE token_hash = ? AND expires_at > now()`. `last_used_at` update is omitted (column absent). |
+| **Logs** (§1.1) | `/var/log/maludb/` if writeable, else fall back to `/var/www/var/log/` (dev without root). |
+
 ### 4.1 Subjects
 
 | URL | File | Methods | Notes |

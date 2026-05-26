@@ -4,6 +4,36 @@ Chronological record of every prompt given on this project and every action take
 
 ---
 
+## 2026-05-26 — Begin implementation: first endpoint
+
+### Prompt 7
+> Please start the process by the first end point
+
+**Actions:**
+- Read project docs (`CLAUDE.md`, `requirements.md`, `tech-stack.md`, `api-calls.md`, `docs/activity.md`) and existing code (`config/database.php`, leftover `html/test_db.php`).
+- Confirmed environment: PHP 8.3.6 with `pdo_pgsql`, `mbstring`, `json`, `fileinfo`. DB reachable (`zozocal` on 192.168.100.163).
+- **Inspected the live schema and found major divergence from `requirements.md`:**
+  - Tables are `maludb_`-prefixed and singular: `maludb_subject` (cols `subject_id`, `subject_type`, `canonical_name`, `aliases`, `description`, `created_at`, `classifier_md`), `maludb_verb`, `maludb_subject_verb`.
+  - `maludb_subject_verb` is a name-keyed "compartment" table (`subject_name`, `verb_name`, namespace, embedding…), **not** an id→id join table; currently 0 rows.
+  - `api_tokens` exists but with a different shape: `expires_at` (no `revoked_at`), `restaurant_id`, `device_name`; 0 rows.
+  - `/var/log/maludb` missing and `/var/log` not writeable by the `maludb` user → logging needs a fallback path.
+  - 3 sample subjects present (Edward Honour / Zozocal / Drajeo).
+- Wrote `tasks/todo.md`: plan for `/v1/subjects` (+ the shared `config/response.php` and `html/.htaccess` foundation), with the schema discrepancies and three open decisions called out.
+- Checked in with the user on the three blocking decisions before writing endpoint code (per CLAUDE.md #3).
+
+**User decisions:** (1) build against live `maludb_*` schema + update `requirements.md`; (2) map `canonical_name AS label`; (3) validate auth against `expires_at` + seed a dev token.
+
+**Implementation:**
+- Added `config/response.php` — the one shared helper file: `require_auth()` (bearer → sha256 → `api_tokens` lookup on `expires_at > now()`), `body_json()`, `json_response()`/`json_error()` (§2.3 shape), `db_query`/`db_exec`/`db_one` (PDO + `sql.log` trace per §2.1 + `?debug=1` buffer per §2.2), `path_id`/`path_sub_id`/`query_int`/`query_str`. Log dir defaults to `/var/log/maludb/`, falls back to `/var/www/var/log/` when not writeable.
+- Added `html/.htaccess` — the four §1.3 rewrite rules + an `Authorization` passthrough line.
+- Added `html/v1/subjects.php` — `GET` (list; `q`/`limit`; `subject_id AS id`, `canonical_name AS label`, `subject_type AS type`; `linked_verbs` = count in `maludb_subject_verb` by `subject_name`) and `POST` (create; `subject_id` derived as `MAX+1` since no sequence; returns 201); `405` otherwise.
+- Seeded a dev token `malu_devLOCAL…123` (device_name `claude-dev`, user_id 3, restaurant_id 1, 10-yr expiry; only the sha256 hash stored).
+- Tested with `php -S` + curl: 401 (missing/bad token), 200 list + field mapping, `q` filter, `?debug=1` trace, 201 create, 400 missing-field, 400 malformed-JSON, 405 PATCH. Verified `sql.log` output and replayed all 8 `.htaccess` example mappings from §1.3 (all pass; built-in server doesn't read `.htaccess`). Deleted the test subject row afterward.
+- Updated `requirements.md` with a new §4.0 "Live-schema mapping" table reconciling the spec names with the real `maludb_*` columns and the `expires_at` auth.
+- Filled in the `tasks/todo.md` review section. Committed & pushed.
+
+---
+
 ## 2026-05-26 — Bootstrap & spec docs
 
 ### Prompt 1 (initial)

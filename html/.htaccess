@@ -1,0 +1,21 @@
+RewriteEngine On
+
+# Pass the Authorization header through to PHP (some SAPIs strip it).
+RewriteCond %{HTTP:Authorization} ^(.+)$
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+
+# 4-segment: /v1/<a>/<id>/<b>/<id>  ->  <a>_id_<b>_id.php?id=...&sub_id=...
+RewriteRule ^v1/([a-zA-Z][a-zA-Z0-9-]*)/([0-9]+)/([a-zA-Z][a-zA-Z0-9-]*)/([0-9]+)$ \
+            v1/$1_id_$3_id.php?id=$2&sub_id=$4 [QSA,L]
+
+# 3-segment: /v1/<a>/<id>/<b>  ->  <a>_id_<b>.php?id=...
+RewriteRule ^v1/([a-zA-Z][a-zA-Z0-9-]*)/([0-9]+)/([a-zA-Z][a-zA-Z0-9-]*)$ \
+            v1/$1_id_$3.php?id=$2 [QSA,L]
+
+# 2-segment: /v1/<a>/<id>  ->  <a>_id.php?id=...
+RewriteRule ^v1/([a-zA-Z][a-zA-Z0-9-]*)/([0-9]+)$ \
+            v1/$1_id.php?id=$2 [QSA,L]
+
+# 1-segment: /v1/<a>  ->  <a>.php
+RewriteRule ^v1/([a-zA-Z][a-zA-Z0-9-]*)$ \
+            v1/$1.php [QSA,L]
