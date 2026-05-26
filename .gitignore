@@ -1,0 +1,6 @@
+.DS_Store
+*.log
+/var/log/
+
+# Auto-generated Claude Code session transcripts — not for the remote.
+/docs/claude-log/
