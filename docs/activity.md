@@ -129,6 +129,20 @@ Chronological record of every prompt given on this project and every action take
 - Wrote `docs/db-requirements.md` requesting granted `maludb_subject_verb_link`/`_unlink` functions from the DBMS project (to lift the verb-link 501s later). Added `501 not_implemented` to the §2.3 status table.
 - Verified the full related-subjects lifecycle live against `fastapi.maludb.org` (link/dupe/self/missing/bidirectional visibility/custom type/delete-both/404); DB left clean. Committed.
 
+### Prompt 21 (continue Phase 4 while user resolves db-requirements)
+> You continue with Phase 4 while I resolve the db-requirements.md issues
+
+**Actions:**
+- **Finding:** `maludb_project` is a view of `maludb_subject WHERE subject_type='project'` — a project IS a subject (project id = subject_id). No archive/status column exists. Project→identifier links live in the SVPOR graph (`maludb_svpor_relationship` → `malu$relationship_edge`), a non-insertable multi-table view (reads work, writes don't). Cleaned up a leftover test row (subject_id=18 `detail-test-renamed`) from an earlier curl-template run.
+- **Built Phase 4 (Projects, §4.6) — 8 endpoints:**
+  - `projects.php` — GET (q/limit) + POST (create a subject with `subject_type='project'`; `MAX(subject_id)+1`). Projects expose `name` (→ canonical_name).
+  - `projects_id.php` — GET (+ embedded `subjects[]`/`verbs[]` read from SVPOR edges), PATCH, DELETE; all scoped to `subject_type='project'` (can't touch a person-subject via /projects).
+  - `projects_id_subjects.php` / `_subjects_id.php` / `_verbs.php` / `_verbs_id.php` — link/unlink → **501** (SVPOR edges not insertable by the API).
+  - `projects_id_archive.php` / `_unarchive.php` — **501** (no archive column).
+  - One copy-paste curl test file per endpoint (self-cleaning for the CRUD ones).
+- Extended `docs/db-requirements.md`: §2 project↔subject/verb link/unlink functions, §3 project archive (column or functions). 
+- Verified all 8 live against `fastapi.maludb.org` (CRUD lifecycle + scoping + 501/405/404 paths); DB left clean. Committed.
+
 ---
 
 ## 2026-05-26 — Bootstrap & spec docs

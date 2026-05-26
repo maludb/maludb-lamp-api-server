@@ -109,15 +109,17 @@ Test row removed after verification.
 - [x] Wrote `docs/db-requirements.md` — requests `maludb_subject_verb_link`/`_unlink` (granted) from the DBMS project so the verb-link 501s can be lifted later.
 - Verified the full related-subjects lifecycle live (link/dupe/self/missing/bidirectional/custom-type/delete); DB left clean.
 
-## Phase 4 — Projects (§4.6)  ⚠ reuses phase-3 link decision
-- [ ] `projects.php` — GET/POST. + test file
-- [ ] `projects_id.php` — GET/PATCH/DELETE. + test file
-- [ ] `projects_id_archive.php` — POST (409 already_archived). + test file
-- [ ] `projects_id_unarchive.php` — POST (409 not_archived). + test file
-- [ ] `projects_id_subjects.php` — POST `{subject_id}` / PUT `{subject_ids:[]}`. + test file
-- [ ] `projects_id_subjects_id.php` — DELETE. + test file
-- [ ] `projects_id_verbs.php` — POST `{verb_id}` / PUT `{verb_ids:[]}`. + test file
-- [ ] `projects_id_verbs_id.php` — DELETE. + test file
+## Phase 4 — Projects (§4.6) ✓ DONE
+- **Finding:** `maludb_project` is a view of `maludb_subject WHERE subject_type='project'` — a project IS a subject (project id = subject_id). No archive column; links live in the non-insertable SVPOR graph. Projects expose `name` (→ canonical_name).
+- [x] `projects.php` — GET (q/limit) + POST (create subject type='project'). + `tests/projects_curls.sh`
+- [x] `projects_id.php` — GET (+ embedded `subjects[]`/`verbs[]` read from SVPOR edges), PATCH, DELETE (all scoped to type='project'). + `tests/projects_id_curls.sh`
+- [x] `projects_id_subjects.php` — POST/PUT → **501** (SVPOR edge not insertable). + test file
+- [x] `projects_id_subjects_id.php` — DELETE → **501**. + test file
+- [x] `projects_id_verbs.php` — POST/PUT → **501**. + test file
+- [x] `projects_id_verbs_id.php` — DELETE → **501**. + test file
+- [x] `projects_id_archive.php` — POST → **501** (no archive column). + test file
+- [x] `projects_id_unarchive.php` — POST → **501**. + test file
+- [x] `docs/db-requirements.md` §2 (project↔subject/verb link functions) + §3 (archive column/functions). Verified all 8 live; DB left clean.
 
 ## Phase 5 — Pools (§4.7)
 - [ ] `pools.php` — GET/POST. + test file
