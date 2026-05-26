@@ -149,6 +149,7 @@ Test row removed after verification.
 - [x] `documents_id.php` — GET (metadata + size/hash; no binary, download deferred §6) / DELETE (document + source_package). + `tests/documents_id_curls.sh`
 - Verified full upload→list→detail→delete lifecycle live; DB left clean (0 orphans).
 
-## Phase 9 — Episodes (§4.9)  ⚠ open body shape (§6)
-- [ ] `episodes.php` — POST only. + test file
-- **Decision needed here:** exact JSON body shape (reverse-engineer `createRemoteEpisode`).
+## Phase 9 — Episodes (§4.9) ✓ DONE
+- **Body shape defined** (resolves §6 open question): `{title, summary?, kind? (default 'activity'), payload?, occurred_at?, occurred_until?, sensitivity? (default 'internal')}`.
+- [x] `episodes.php` — POST only, via `maludb_core.register_episode(...)` under `SET LOCAL search_path TO public, maludb_core` (tenant-owned `owner_schema='public'`). 400/422/405/401. + `tests/episodes_curls.sh`
+- Verified live (create default + with kind/occurred_at; bad sensitivity → 422); cleaned up test episodes. Nice-to-have public wrapper noted in db-requirements §6.

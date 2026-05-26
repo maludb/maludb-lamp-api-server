@@ -290,6 +290,7 @@ against the real schema; the public JSON contract is preserved by aliasing in SQ
 | `skills` resource | `maludb_skill` (direct-INSERT, DELETE ok; `skill_id` sequence). `name`→skill_name; visibility/packaging_kind DB-enforced. Duplicate via `maludb_skill_fork`. Body/markdown not exposed (db-requirements §4). |
 | `documents` resource | metadata in `maludb_document`, **bytes in `maludb_source_package.content_bytes`** (bytea). Upload = direct INSERT into both (ids sequence-assigned); `content_size`+`sha256 content_hash` computed by the API. GET = metadata only; binary download deferred (§6). DELETE removes both rows. |
 | **Notes** (§4.5) | **Not built** — blocked server-side (db-requirements §5): `maludb_memory` writes fail (missing `validate_payload`), `maludb_quick_add_note` permission-denied, no issue/closed state. |
+| `episodes` resource (§4.9) | Created via `maludb_core.register_episode(kind,title,summary,payload,occurred_at,occurred_until,sensitivity)`. It's SECURITY INVOKER, so the endpoint runs it with `SET LOCAL search_path TO public, maludb_core` (public first → `owner_schema='public'` tenant ownership; maludb_core in path → resolves base tables). POST-only in v1; readback is qualified within the same txn. |
 
 ### 4.1 Subjects
 
@@ -410,7 +411,7 @@ The following are explicitly **not** in v1:
 
 These remain to be answered before — or during — implementation:
 
-- **Episode `POST` body shape.** Needs reverse-engineering from `src/main/api/episodes.ts` in the client to pin the exact JSON contract.
+- ~~**Episode `POST` body shape.**~~ **Resolved** (2026-05-26): the endpoint defines `{title (required), summary?, kind? (default 'activity'), payload?, occurred_at?, occurred_until?, sensitivity? (default 'internal')}`, mapped to `register_episode(...)`. Revisit if the client's `createRemoteEpisode` contract differs.
 - **Episode read path.** With only `POST /v1/episodes` in v1, how does the client retrieve created activities? Is it via a different surface (notes? a derived view?) until the GET endpoints are blessed?
 - **Document download.** The client references `GET /v1/documents/{id}/download` in a code comment but doesn't call it. Whether to spec it in v1 or defer.
 - **`config/env.php` vs Apache `SetEnv`.** Where `DEBUG_ENABLED` lives in production.

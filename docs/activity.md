@@ -129,6 +129,14 @@ Chronological record of every prompt given on this project and every action take
 - Wrote `docs/db-requirements.md` requesting granted `maludb_subject_verb_link`/`_unlink` functions from the DBMS project (to lift the verb-link 501s later). Added `501 not_implemented` to the §2.3 status table.
 - Verified the full related-subjects lifecycle live against `fastapi.maludb.org` (link/dupe/self/missing/bidirectional visibility/custom type/delete-both/404); DB left clean. Committed.
 
+### Prompt 27 (→ Phase 9 Episodes)
+> Please move to phase 9.
+
+**Actions:**
+- Found episode creation = `maludb_core.register_episode(kind,title,summary,payload,occurred_at,occurred_until,sensitivity)`. No public episode facade view exists; the helper is SECURITY INVOKER and derives `owner_schema` from `current_schema()`. Determined that running it under `SET LOCAL search_path TO public, maludb_core` gives correct tenant ownership (`owner_schema='public'`) while resolving the core base tables.
+- **Built Phase 9 (Episodes, §4.9):** `episodes.php` — POST only; defined the body contract `{title, summary?, kind? (default 'activity'), payload?, occurred_at?, occurred_until?, sensitivity? (default 'internal')}` (resolves the §6 open question). 400 missing title, 422 bad sensitivity (DB check), 405/401. + `tests/episodes_curls.sh`.
+- Verified live (create default + kind/occurred_at variants; 422 path); cleaned up the 2 test episodes (delete works with search_path set; episodes are otherwise an append-only log with no v1 DELETE). Updated `requirements.md` §4.0/§6 and noted a nice-to-have public wrapper in `db-requirements.md` §6. Committed.
+
 ### Prompt 26 (→ Phase 8 Documents)
 > [skip Notes; do Documents next]
 

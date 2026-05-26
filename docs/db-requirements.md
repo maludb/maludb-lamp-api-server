@@ -102,6 +102,16 @@ below is in place, the API will implement the endpoints.
 on it). That gives notes a native home with readable bodies and issue state, and the API builds
 all 4 endpoints with no document-facade changes.
 
+## 6. Episodes — nice-to-have (non-blocking)
+
+`/v1/episodes` POST works today via `maludb_core.register_episode(...)`, but that helper is
+SECURITY INVOKER and not search-path-safe, so the endpoint must run it under
+`SET LOCAL search_path TO public, maludb_core`. A `public` SECURITY DEFINER wrapper
+(e.g. `maludb_register_episode(...)` with `SET search_path`, like `maludb_subject_verb_create`)
+would let the API drop the search_path manipulation. Not required — current behavior is correct
+(episodes are tenant-owned). Also: episode read/list/get endpoints are out of v1; if added later,
+a `maludb_episode` facade view (RLS-scoped) would be needed.
+
 ## 4. Skill body / markdown not exposed (limits `/v1/skills` to metadata)
 
 **Status:** not blocking — skill CRUD works for metadata; just a coverage gap.
