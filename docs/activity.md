@@ -59,6 +59,14 @@ Chronological record of every prompt given on this project and every action take
 - Documented the decision in `requirements.md` §4.10 (counts in list, full arrays in detail). Next endpoint: `subjects_id.php` (GET embeds the arrays; + PATCH/DELETE).
 - Committed & pushed.
 
+### Prompt 11
+> Before we move on, can you provide me with a series of test curl commands I can include as in regression test list.
+
+**Actions:**
+- Added `tests/regression_subjects.sh` — pure curl + grep (no deps), asserts status code + a key body substring per case. Covers `/v1/subjects`: auth (missing / malformed / unknown token → 401), GET list (200 + `linked_verbs`/`related_subjects` present), `q` no-match → empty list, `limit`, `debug=1`, POST validation (missing label / malformed JSON → 400), and 405 for PATCH/PUT/DELETE on the collection. Destructive POST-create is gated behind `RUN_WRITE=1` (prints created id + cleanup hint, since no DELETE endpoint exists yet). `BASE`/`TOKEN` overridable via env.
+- Verified against `https://fastapi.maludb.org`: 14/14 read-only pass; 15/15 with `RUN_WRITE=1`; removed the regression row afterward.
+- Committed & pushed.
+
 ---
 
 ## 2026-05-26 — Bootstrap & spec docs
