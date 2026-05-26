@@ -103,6 +103,16 @@ Chronological record of every prompt given on this project and every action take
   - All verified live against `https://fastapi.maludb.org` on throwaway rows; DB left clean.
 - Updated `requirements.md` §4.0 (views + triggers + error-handler mapping + verb columns). Committed.
 
+### Prompt 17 (continue → Phase 2)
+> Yes, continue
+
+**Actions:**
+- **Built Phase 2 (Type lists, §4.3):**
+  - `subject-types.php` — GET `maludb_subject_type` ordered by `sort_order`; returns `{type, display_name, description, sort_order}` under `subject_types`. + `tests/subject-types_curls.sh`.
+  - `verb-types.php` — GET `maludb_verb_type` (adds `semantic_class`) under `verb_types`. + `tests/verb-types_curls.sh`.
+  - Both read-only (401 no-token, 405 non-GET). Verified live; confirms the hyphen is preserved through the 1-segment rewrite (`/v1/subject-types` → `subject-types.php`). These are the source of the valid `type` values the create/update triggers enforce.
+- Committed.
+
 ---
 
 ## 2026-05-26 — Bootstrap & spec docs

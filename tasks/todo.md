@@ -94,9 +94,9 @@ Test row removed after verification.
 - [x] `verbs_id_subjects.php` — GET (read-only linked subjects). + `tests/verbs_id_subjects_curls.sh`
 - [x] **Foundation fix (uncovered here):** `maludb_subject`/`maludb_verb` are updatable VIEWS with type-validation triggers. Added a global exception/fatal handler to `config/response.php` (standard JSON error + `api.log` + SQLSTATE→409/422/500 mapping) so bad input returns clean 4xx instead of a blank 500. Verified live (invalid verb_type → 422).
 
-## Phase 2 — Type lists (§4.3)
-- [ ] `subject-types.php` — GET (`maludb_subject_type` by `sort_order`). + test file
-- [ ] `verb-types.php` — GET (`maludb_verb_type` by `sort_order`). + test file
+## Phase 2 — Type lists (§4.3) ✓ DONE
+- [x] `subject-types.php` — GET (`maludb_subject_type` by `sort_order`; returns `{type,display_name,description,sort_order}`). + `tests/subject-types_curls.sh`
+- [x] `verb-types.php` — GET (`maludb_verb_type` by `sort_order`; adds `semantic_class`). + `tests/verb-types_curls.sh`
 
 ## Phase 3 — Subjects sub-resources (§4.1)  ⚠ needs link-write decision
 - [ ] `subjects_id_verbs.php` — GET + POST `{verb_id}`. + test file
