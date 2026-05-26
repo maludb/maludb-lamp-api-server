@@ -135,11 +135,13 @@ Test row removed after verification.
 - [x] `skills_id_duplicate.php` — POST via `maludb_skill_fork` (catches non-forkable → 422); 201 on success. + `tests/skills_id_duplicate_curls.sh`
 - Verified full lifecycle live (create/GET/visibility-filter/PATCH/422/DELETE/404); DB left clean (DELETE works). Duplicate happy-path needs a forkable/published source skill.
 
-## Phase 7 — Notes (§4.5)
-- [ ] `notes.php` — GET/POST `{title, body, type?, project_id?}`. + test file
-- [ ] `notes_id.php` — GET/PATCH/DELETE. + test file
-- [ ] `notes_id_close-issue.php` — POST (409 if not an issue). + test file
-- [ ] `notes_id_reopen-issue.php` — POST (409 if not issue/closed). + test file
+## Phase 7 — Notes (§4.5) ⏸ DEFERRED (blocked on server-side work)
+- **Not built** (user direction 2026-05-26): skip Notes, do Documents next; full server-side
+  requirements written in `docs/db-requirements.md` §5 for the user to fix, then we return.
+- Blockers verified live: (1) `maludb_memory` writes fail — missing `validate_payload(...)` fn;
+  (2) `maludb_quick_add_note` permission-denied (`_upload_document_for_schema`); (3) no issue/
+  closed state in the schema; (4) document/note body not exposed by `maludb_document`.
+- [ ] `notes.php`, `notes_id.php`, `notes_id_close-issue.php`, `notes_id_reopen-issue.php` — pending DB fixes (db-requirements §5).
 
 ## Phase 8 — Documents (§4.4)  ⚠ needs file-storage decision
 - [ ] `documents.php` — GET / POST (multipart: file, filename, mime_type, description). + test file

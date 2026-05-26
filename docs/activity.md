@@ -129,6 +129,14 @@ Chronological record of every prompt given on this project and every action take
 - Wrote `docs/db-requirements.md` requesting granted `maludb_subject_verb_link`/`_unlink` functions from the DBMS project (to lift the verb-link 501s later). Added `501 not_implemented` to the §2.3 status table.
 - Verified the full related-subjects lifecycle live against `fastapi.maludb.org` (link/dupe/self/missing/bidirectional visibility/custom type/delete-both/404); DB left clean. Committed.
 
+### Prompt 25 (continue → Phase 7 Notes)
+> Yes, please continue → [Notes investigation]
+
+**Actions:**
+- Investigated Notes mapping and found **multiple hard blockers**: no issue concept in the schema; `maludb_memory` INSERT/DELETE fail (missing `validate_payload(...)` fn); `maludb_quick_add_note` permission-denied (`_upload_document_for_schema`); `maludb_upload_document` works but `maludb_document` exposes no body to read back. Confirmed `maludb_document` supports UPDATE/DELETE.
+- **User decision:** skip Notes for now, move to Documents; write the full server-side requirements so they can fix it and we return. Did **not** build any Notes endpoints.
+- Wrote `docs/db-requirements.md` §5: the Notes endpoint contract + the exact blockers and a minimal recommended fix path (repair `maludb_memory` writes + add an issue/closed field). Marked Phase 7 deferred in `tasks/todo.md`. Committed.
+
 ### Prompt 24 (continue → Phase 6)
 > Yes, please continue
 
