@@ -129,6 +129,18 @@ Chronological record of every prompt given on this project and every action take
 - Wrote `docs/db-requirements.md` requesting granted `maludb_subject_verb_link`/`_unlink` functions from the DBMS project (to lift the verb-link 501s later). Added `501 not_implemented` to the §2.3 status table.
 - Verified the full related-subjects lifecycle live against `fastapi.maludb.org` (link/dupe/self/missing/bidirectional visibility/custom type/delete-both/404); DB left clean. Committed.
 
+### Prompt 23 (decisions: keep link writes deferred; continue to Phase 5)
+> [keep link writes deferred until unlink helpers exist] + [continue to Phase 5]
+
+**Actions:**
+- **Built Phase 5 (Pools, §4.7):**
+  - `pools.php` — GET (q/limit; excludes `tombstoned`) + POST (insert into `maludb_memory_pool`, `creation_kind='api'`, `pool_id` sequence-assigned; name→pool_name, description→task_objective).
+  - `pools_id.php` — GET + PATCH (name/description); no DELETE in v1 (405).
+  - `pools_id_archive.php` — POST sets `lifecycle_state='archived'`+`archived_at`; `409 already_archived`; `404`.
+  - One copy-paste curl test file per endpoint (parameterized by `POOL_ID` since pools have no API delete).
+- Verified the full lifecycle live (create/detail/patch/archive/409/405/404). The pool view denies DELETE to the API user (no grant; consistent with v1 having no pool DELETE), so the test pool (id=8) was **tombstoned** to neutralize it (can't hard-delete) — flagged to the user.
+- Committed.
+
 ### Prompt 22 (facade write-path reference)
 > Before we go to 5 … how to write to each facade view [Groups A/B/C reference]
 

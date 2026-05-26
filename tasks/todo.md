@@ -121,10 +121,12 @@ Test row removed after verification.
 - [x] `projects_id_unarchive.php` — POST → **501**. + test file
 - [x] `docs/db-requirements.md` §2 (project↔subject/verb link functions) + §3 (archive column/functions). Verified all 8 live; DB left clean.
 
-## Phase 5 — Pools (§4.7)
-- [ ] `pools.php` — GET/POST. + test file
-- [ ] `pools_id.php` — GET/PATCH (no DELETE in v1). + test file
-- [ ] `pools_id_archive.php` — POST. + test file
+## Phase 5 — Pools (§4.7) ✓ DONE
+- **Finding:** `maludb_memory_pool` is direct-INSERT; `pool_id` sequence-assigned; `creation_kind` must be `prompt|api|mcp|sql` (API uses `api`); `lifecycle_state` ∈ `active|sealed|archived|tombstoned`; has `archived_at`. name→pool_name, description→task_objective. **DELETE is permission-denied on the pool view** (consistent w/ no v1 DELETE).
+- [x] `pools.php` — GET (q/limit, excludes tombstoned) + POST (creation_kind='api'). + `tests/pools_curls.sh`
+- [x] `pools_id.php` — GET + PATCH (name/description); no DELETE → 405. + `tests/pools_id_curls.sh`
+- [x] `pools_id_archive.php` — POST sets lifecycle_state='archived'+archived_at; 409 already_archived; 404. + `tests/pools_id_archive_curls.sh`
+- Verified full lifecycle live (create/detail/patch/archive/409/405/404). Test pool id=8 left **tombstoned** (can't hard-delete — no grant); flagged to user.
 
 ## Phase 6 — Skills (§4.8)
 - [ ] `skills.php` — GET (`visibility` filter) / POST. + test file
