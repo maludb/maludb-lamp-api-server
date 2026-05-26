@@ -113,6 +113,22 @@ Chronological record of every prompt given on this project and every action take
   - Both read-only (401 no-token, 405 non-GET). Verified live; confirms the hyphen is preserved through the 1-segment rewrite (`/v1/subject-types` → `subject-types.php`). These are the source of the valid `type` values the create/update triggers enforce.
 - Committed.
 
+### Prompts 18–20 (Phase 3 + DB-ownership constraint)
+> continue … (interrupt) you cannot create any objects directly on the database … you can [do] any CRUD related DML commands but you cannot execute DDL commands.
+
+**Actions:**
+- Investigated the link tables. Found `maludb_subject_verb` is a **non-insertable multi-table view** over `malu$vector_compartment` (no grant for our user); the only create path is `maludb_subject_verb_create(...)`, which needs embedding config the `{verb_id}` contract lacks, and there is **no delete function**. `maludb_subject_relationship` is an **insertable single-table view** (`relationship_type` NOT NULL, otherwise unvalidated).
+- **User constraint:** the API must not create/alter DB objects (no DDL); data DML through already-writable objects is fine. Recorded that I had created **no** schema objects (probes were rolled back; only the approved dev token row persists).
+- **Decisions:** defer subject↔verb writes (501) and write up the DB-side need; build related-subjects fully; relationship_type defaults to `related_to` (overridable).
+- **Built Phase 3 (Subjects sub-resources, §4.1):**
+  - `subjects_id_verbs.php` — GET lists linked verbs (works); POST → `501 not_implemented`.
+  - `subjects_id_verbs_id.php` — DELETE → `501 not_implemented`.
+  - `subjects_id_related-subjects.php` — GET lists related; POST `{related_subject_id, relationship_type?}` inserts into `maludb_subject_relationship` (default `related_to`; `MAX(relationship_id)+1`); 400 missing, 422 self/nonexistent, 409 duplicate.
+  - `subjects_id_related-subjects_id.php` — DELETE removes the relationship either direction (200/404).
+  - One copy-paste curl test file per endpoint (self-cleaning for the mutating ones).
+- Wrote `docs/db-requirements.md` requesting granted `maludb_subject_verb_link`/`_unlink` functions from the DBMS project (to lift the verb-link 501s later). Added `501 not_implemented` to the §2.3 status table.
+- Verified the full related-subjects lifecycle live against `fastapi.maludb.org` (link/dupe/self/missing/bidirectional visibility/custom type/delete-both/404); DB left clean. Committed.
+
 ---
 
 ## 2026-05-26 — Bootstrap & spec docs

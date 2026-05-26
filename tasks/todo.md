@@ -98,14 +98,16 @@ Test row removed after verification.
 - [x] `subject-types.php` — GET (`maludb_subject_type` by `sort_order`; returns `{type,display_name,description,sort_order}`). + `tests/subject-types_curls.sh`
 - [x] `verb-types.php` — GET (`maludb_verb_type` by `sort_order`; adds `semantic_class`). + `tests/verb-types_curls.sh`
 
-## Phase 3 — Subjects sub-resources (§4.1)  ⚠ needs link-write decision
-- [ ] `subjects_id_verbs.php` — GET + POST `{verb_id}`. + test file
-- [ ] `subjects_id_verbs_id.php` — DELETE. + test file
-- [ ] `subjects_id_related-subjects.php` — GET + POST `{related_subject_id}`. + test file
-- [ ] `subjects_id_related-subjects_id.php` — DELETE. + test file
-- **Decision needed here:** `maludb_subject_verb` (compartment) and `maludb_subject_relationship`
-  have no defaults/sequence — pick how a plain link populates `compartment_id`/`namespace` and
-  `relationship_id`/`relationship_type`/labels.
+## Phase 3 — Subjects sub-resources (§4.1) ✓ DONE
+- **Decision (2026-05-26):** verb-linking is a vector compartment owned by the DBMS project;
+  the API can't create it (multi-table view, no grant, needs embedding config). Related-subjects
+  is normal data CRUD on an insertable view. The API does DML only, no DDL.
+- [x] `subjects_id_verbs.php` — GET (list linked verbs, works); POST → **501** (deferred). + `tests/subjects_id_verbs_curls.sh`
+- [x] `subjects_id_verbs_id.php` — DELETE → **501** (deferred). + `tests/subjects_id_verbs_id_curls.sh`
+- [x] `subjects_id_related-subjects.php` — GET + POST `{related_subject_id, relationship_type?}` (default `related_to`; 400/422/409). + `tests/subjects_id_related-subjects_curls.sh`
+- [x] `subjects_id_related-subjects_id.php` — DELETE (either direction; 200/404). + `tests/subjects_id_related-subjects_id_curls.sh`
+- [x] Wrote `docs/db-requirements.md` — requests `maludb_subject_verb_link`/`_unlink` (granted) from the DBMS project so the verb-link 501s can be lifted later.
+- Verified the full related-subjects lifecycle live (link/dupe/self/missing/bidirectional/custom-type/delete); DB left clean.
 
 ## Phase 4 — Projects (§4.6)  ⚠ reuses phase-3 link decision
 - [ ] `projects.php` — GET/POST. + test file

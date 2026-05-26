@@ -217,8 +217,9 @@ All errors use this shape:
 | `409` | Conflict (unique constraint, already-archived, etc.) | `conflict`, `already_archived` |
 | `413` | Upload too large (`POST /v1/documents`) | `upload_too_large` |
 | `415` | Unsupported `Content-Type` on request | `unsupported_media_type` |
-| `422` | Validation failed (well-formed JSON, bad values) | `validation_failed` |
+| `422` | Validation failed (well-formed JSON, bad values; incl. DB trigger/constraint rejects) | `validation_failed` |
 | `500` | Unhandled exception (also written to `api.log` with stack) | `internal_error` |
+| `501` | Feature needs a DBMS-project change not yet available (see `docs/db-requirements.md`) | `not_implemented` |
 
 The full set of `code` values grows as endpoints are implemented and is enumerated here over time.
 
