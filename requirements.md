@@ -263,18 +263,27 @@ The original draft above assumed table/column names (`subjects.label`, `subject_
 `api_tokens.revoked_at`) that **do not exist** in the live database. Endpoints are built
 against the real schema; the public JSON contract is preserved by aliasing in SQL.
 
+> **`maludb_subject` and `maludb_verb` are updatable VIEWS** (relkind `v`), not base tables.
+> INSERT/UPDATE/DELETE go through them fine, but **triggers enforce referential integrity** —
+> e.g. an unregistered `verb_type`/`subject_type` is rejected (the valid set is in
+> `maludb_verb_type` / `maludb_subject_type`, surfaced by §4.3). The shared error handler maps
+> such trigger/constraint violations to `422 validation_failed` (or `409 conflict` for unique
+> violations) rather than a 500. A `null` type is normalized by the trigger (verbs → `other`).
+
 | API field / concept | Live DB source |
 |---|---|
-| `subjects` resource | table `maludb_subject` |
+| `subjects` resource | view `maludb_subject` |
 | subject `id` | `maludb_subject.subject_id` (bigint; **no sequence/default** — new ids derived as `MAX(subject_id)+1` at insert) |
 | subject `label` | `maludb_subject.canonical_name` (aliased `canonical_name AS label`) |
 | subject `type` | `maludb_subject.subject_type` |
 | subject `description`, `classifier_md` | same column names |
-| `verbs` resource | table `maludb_verb` (`verb_id`, `canonical_name`, `verb_type`, …) |
-| subject↔verb links / `linked_verbs` | `maludb_subject_verb`, keyed by **text** (`subject_name`, `verb_name`); `linked_verbs` = `count(*) WHERE subject_name = canonical_name` |
+| `verbs` resource | view `maludb_verb` (`verb_id`, `canonical_name`, `verb_type`, `description`, `classifier_md`) |
+| verb `id`/`type` | `verb_id` (no sequence — `MAX(verb_id)+1`) / `verb_type`. Verbs expose `canonical_name` directly (no `label` alias). |
+| subject↔verb links / `linked_verbs` / `linked_subjects` | `maludb_subject_verb`, keyed by **text** (`subject_name`, `verb_name`); `linked_verbs` = `count WHERE subject_name = canonical_name`, `linked_subjects` = `count WHERE verb_name = canonical_name` |
 | subject types / verb types | `maludb_subject_type` / `maludb_verb_type` |
 | **Auth** (§1.4) | `api_tokens` has **no `revoked_at`/`token_prefix`/`last_used_at`**; it has `expires_at` (NOT NULL), `restaurant_id`, `device_name`. Validation is `WHERE token_hash = ? AND expires_at > now()`. `last_used_at` update is omitted (column absent). |
 | **Logs** (§1.1) | `/var/log/maludb/` if writeable, else fall back to `/var/www/var/log/` (dev without root). |
+| **Errors** (§2.3/2.4) | A global handler returns the standard JSON error for any uncaught exception, logs detail+stack to `api.log`, and maps PG SQLSTATEs: `23505`→`409 conflict`; `23502/23503/23514/22023/22P02/P0001`→`422 validation_failed`; else `500 internal_error`. |
 
 ### 4.1 Subjects
 

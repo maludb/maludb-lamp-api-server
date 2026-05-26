@@ -225,3 +225,75 @@ function query_str(string $name, ?string $default = null, int $max_len = 200): ?
     $v = (string)$_GET[$name];
     return mb_substr($v, 0, $max_len);
 }
+
+/* ---------------------------------------------------------------------------
+ * Global error handling (requirements.md §2.3 error body, §2.4 api.log)
+ *
+ * Without this, an uncaught exception (e.g. a DB trigger rejecting an unknown
+ * type) produces a blank 500. Here we always return the standard JSON error
+ * shape, log the detail + stack to api.log, and map known PostgreSQL
+ * constraint/trigger violations to 409/422 instead of 500.
+ * ------------------------------------------------------------------------- */
+
+function api_log(string $summary, ?Throwable $e = null): void {
+    $line = sprintf(
+        "%s  %s  %s  user=%s  %s\n",
+        iso_now_ms(),
+        $_SERVER['REQUEST_METHOD'] ?? '-',
+        $_SERVER['REQUEST_URI'] ?? '-',
+        (string) $GLOBALS['__auth_user_id'],
+        $summary
+    );
+    if ($e !== null) {
+        $line .= $e->getTraceAsString() . "\n";
+    }
+    @file_put_contents(maludb_log_dir() . '/api.log', $line . "\n", FILE_APPEND);
+}
+
+/** Pull the human-readable "ERROR: ..." line out of a PDO/Postgres message. */
+function pg_error_message(Throwable $e): string {
+    if (preg_match('/ERROR:\s*(.+?)(\n|$)/s', $e->getMessage(), $m)) {
+        return trim($m[1]);
+    }
+    return $e->getMessage();
+}
+
+function handle_uncaught(Throwable $e): void {
+    $status = 500; $code = 'internal_error'; $message = 'An unexpected error occurred.';
+
+    if ($e instanceof PDOException) {
+        $sqlstate = (is_array($e->errorInfo ?? null) && isset($e->errorInfo[0]))
+            ? (string) $e->errorInfo[0]
+            : substr((string) $e->getCode(), 0, 5);
+        switch ($sqlstate) {
+            case '23505':                       // unique_violation
+                $status = 409; $code = 'conflict';          $message = pg_error_message($e); break;
+            case '23502': case '23503': case '23514': // not_null / fk / check
+            case '22023': case '22P02': case 'P0001': // invalid value / bad cast / trigger RAISE
+                $status = 422; $code = 'validation_failed'; $message = pg_error_message($e); break;
+        }
+    }
+
+    api_log(sprintf('%d %s: %s', $status, get_class($e), $e->getMessage()), $status >= 500 ? $e : null);
+
+    if (!headers_sent()) {
+        http_response_code($status);
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode(['error' => ['code' => $code, 'message' => $message]]);
+    exit;
+}
+
+set_exception_handler('handle_uncaught');
+
+register_shutdown_function(function (): void {
+    $err = error_get_last();
+    if ($err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        api_log('500 fatal: ' . $err['message'] . ' in ' . $err['file'] . ':' . $err['line']);
+        if (!headers_sent()) {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        echo json_encode(['error' => ['code' => 'internal_error', 'message' => 'An unexpected error occurred.']]);
+    }
+});

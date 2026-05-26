@@ -87,6 +87,24 @@ Chronological record of every prompt given on this project and every action take
 
 ---
 
+## 2026-05-26 — Build plan + Phase 1 (Verbs)
+
+### Prompts 14–16
+> What endpoint do you recommend next? … Let's first make a plan for writing the rest of the endpoints in order … one [test] file for each endpoint … Please Begin
+
+**Actions:**
+- Recommended Verbs next; agreed (via questions) on a dependency-aware order, copy-paste curl test files (one per endpoint, `tests/<endpoint>_curls.sh`), leaving the existing Subjects tests as-is. Wrote the full build plan into `tasks/todo.md` and committed it.
+- **Discovered:** `maludb_subject` and `maludb_verb` are updatable **VIEWS** with triggers validating `*_type` against the type tables. An unregistered type raised a DB error that surfaced as a **blank 500**.
+- **Foundation fix:** added a global exception + shutdown handler to `config/response.php` — standard JSON error body for any uncaught exception, logs detail + stack to `api.log`, maps PG SQLSTATEs (`23505`→409 `conflict`; `23502/23503/23514/22023/22P02/P0001`→422 `validation_failed`; else 500 `internal_error`). Verified: invalid `verb_type` now → **422** (was blank 500); valid/`null` type → 201 (`null` normalized to `other`).
+- **Built Phase 1 (Verbs, §4.2):**
+  - `verbs.php` — GET (`q`/`limit`, `linked_subjects` count) + POST (`MAX(verb_id)+1`, exposes `canonical_name`). + `tests/verbs_curls.sh`.
+  - `verbs_id.php` — GET (+ embedded `subjects[]`), PATCH, DELETE. + `tests/verbs_id_curls.sh`.
+  - `verbs_id_subjects.php` — GET read-only linked subjects (3-segment rewrite confirmed). + `tests/verbs_id_subjects_curls.sh`.
+  - All verified live against `https://fastapi.maludb.org` on throwaway rows; DB left clean.
+- Updated `requirements.md` §4.0 (views + triggers + error-handler mapping + verb columns). Committed.
+
+---
+
 ## 2026-05-26 — Bootstrap & spec docs
 
 ### Prompt 1 (initial)

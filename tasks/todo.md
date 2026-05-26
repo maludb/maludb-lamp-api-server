@@ -88,10 +88,11 @@ Test row removed after verification.
 
 **Done:** `subjects.php` ✓, `subjects_id.php` ✓.
 
-## Phase 1 — Verbs (§4.2) ← NEXT
-- [ ] `verbs.php` — GET (q/limit, `linked_subjects` count) + POST. + `tests/verbs_curls.sh`
-- [ ] `verbs_id.php` — GET/PATCH/DELETE (`canonical_name`/`type`/`description`/`classifier_md`). + test file
-- [ ] `verbs_id_subjects.php` — GET (read-only linked subjects). + test file
+## Phase 1 — Verbs (§4.2) ✓ DONE
+- [x] `verbs.php` — GET (q/limit, `linked_subjects` count) + POST. + `tests/verbs_curls.sh`
+- [x] `verbs_id.php` — GET (+ embedded `subjects[]`) / PATCH / DELETE. + `tests/verbs_id_curls.sh`
+- [x] `verbs_id_subjects.php` — GET (read-only linked subjects). + `tests/verbs_id_subjects_curls.sh`
+- [x] **Foundation fix (uncovered here):** `maludb_subject`/`maludb_verb` are updatable VIEWS with type-validation triggers. Added a global exception/fatal handler to `config/response.php` (standard JSON error + `api.log` + SQLSTATE→409/422/500 mapping) so bad input returns clean 4xx instead of a blank 500. Verified live (invalid verb_type → 422).
 
 ## Phase 2 — Type lists (§4.3)
 - [ ] `subject-types.php` — GET (`maludb_subject_type` by `sort_order`). + test file
