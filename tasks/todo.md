@@ -143,10 +143,11 @@ Test row removed after verification.
   closed state in the schema; (4) document/note body not exposed by `maludb_document`.
 - [ ] `notes.php`, `notes_id.php`, `notes_id_close-issue.php`, `notes_id_reopen-issue.php` — pending DB fixes (db-requirements §5).
 
-## Phase 8 — Documents (§4.4)  ⚠ needs file-storage decision
-- [ ] `documents.php` — GET / POST (multipart: file, filename, mime_type, description). + test file
-- [ ] `documents_id.php` — GET (metadata) / DELETE. + test file
-- **Decision needed here:** where uploaded bytes live (filesystem path vs DB), max size, download path.
+## Phase 8 — Documents (§4.4) ✓ DONE
+- **Resolved:** no storage decision needed — `maludb_source_package.content_bytes` (bytea) stores bytes in-DB; `maludb_document` holds metadata. Both direct-INSERT, ids sequence-assigned, DELETE works (no orphans).
+- [x] `documents.php` — GET (q/limit, joins content_size) + POST (multipart `file`/`filename`/`mime_type`/`description`; bytea via PDO::PARAM_LOB; computes size + sha256; 413/400 paths). + `tests/documents_curls.sh`
+- [x] `documents_id.php` — GET (metadata + size/hash; no binary, download deferred §6) / DELETE (document + source_package). + `tests/documents_id_curls.sh`
+- Verified full upload→list→detail→delete lifecycle live; DB left clean (0 orphans).
 
 ## Phase 9 — Episodes (§4.9)  ⚠ open body shape (§6)
 - [ ] `episodes.php` — POST only. + test file

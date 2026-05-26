@@ -285,6 +285,11 @@ against the real schema; the public JSON contract is preserved by aliasing in SQ
 | **Auth** (§1.4) | `api_tokens` has **no `revoked_at`/`token_prefix`/`last_used_at`**; it has `expires_at` (NOT NULL), `restaurant_id`, `device_name`. Validation is `WHERE token_hash = ? AND expires_at > now()`. `last_used_at` update is omitted (column absent). |
 | **Logs** (§1.1) | `/var/log/maludb/` if writeable, else fall back to `/var/www/var/log/` (dev without root). |
 | **Errors** (§2.3/2.4) | A global handler returns the standard JSON error for any uncaught exception, logs detail+stack to `api.log`, and maps PG SQLSTATEs: `23505`→`409 conflict`; `23502/23503/23514/22023/22P02/P0001`→`422 validation_failed`; else `500 internal_error`. |
+| `projects` resource | `maludb_project` = view of `maludb_subject WHERE subject_type='project'`. A project IS a subject; project id = subject_id; exposes `name`→canonical_name. No archive column (see db-requirements §3). Identifier links are SVPOR edges (read-only via API — see db-requirements §1–2). |
+| `pools` resource | `maludb_memory_pool` (direct-INSERT view; `pool_id` sequence). `name`→pool_name, `description`→task_objective; `creation_kind='api'`; archive via `lifecycle_state='archived'`+`archived_at`. DELETE not granted (no v1 delete). |
+| `skills` resource | `maludb_skill` (direct-INSERT, DELETE ok; `skill_id` sequence). `name`→skill_name; visibility/packaging_kind DB-enforced. Duplicate via `maludb_skill_fork`. Body/markdown not exposed (db-requirements §4). |
+| `documents` resource | metadata in `maludb_document`, **bytes in `maludb_source_package.content_bytes`** (bytea). Upload = direct INSERT into both (ids sequence-assigned); `content_size`+`sha256 content_hash` computed by the API. GET = metadata only; binary download deferred (§6). DELETE removes both rows. |
+| **Notes** (§4.5) | **Not built** — blocked server-side (db-requirements §5): `maludb_memory` writes fail (missing `validate_payload`), `maludb_quick_add_note` permission-denied, no issue/closed state. |
 
 ### 4.1 Subjects
 

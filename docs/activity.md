@@ -129,6 +129,17 @@ Chronological record of every prompt given on this project and every action take
 - Wrote `docs/db-requirements.md` requesting granted `maludb_subject_verb_link`/`_unlink` functions from the DBMS project (to lift the verb-link 501s later). Added `501 not_implemented` to the §2.3 status table.
 - Verified the full related-subjects lifecycle live against `fastapi.maludb.org` (link/dupe/self/missing/bidirectional visibility/custom type/delete-both/404); DB left clean. Committed.
 
+### Prompt 26 (→ Phase 8 Documents)
+> [skip Notes; do Documents next]
+
+**Actions:**
+- Found documents need no storage decision: `maludb_source_package.content_bytes` (bytea) stores file bytes in-DB; `maludb_document` holds metadata; both direct-INSERT (sequence ids), DELETE works.
+- **Built Phase 8 (Documents, §4.4):**
+  - `documents.php` — GET (q/limit; joins `content_size`) + POST (`multipart/form-data`: `file`/`filename`/`mime_type`/`description`; binds bytea via `PDO::PARAM_LOB`; computes `content_size` + sha256 `content_hash`; 413 on oversize, 400 on missing file). Manual `sql_log` for the bytea insert (bytes redacted).
+  - `documents_id.php` — GET (metadata + size/hash + description; no binary — download deferred §6) / DELETE (removes document + its source_package).
+  - One copy-paste curl test file per endpoint (multipart, self-cleaning).
+- Verified the full upload→list→detail→delete lifecycle live (real file upload, in-DB bytes, correct size/hash); DB left clean (0 orphan source packages). Updated `requirements.md` §4.0. Committed.
+
 ### Prompt 25 (continue → Phase 7 Notes)
 > Yes, please continue → [Notes investigation]
 
