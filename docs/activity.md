@@ -67,6 +67,24 @@ Chronological record of every prompt given on this project and every action take
 - Verified against `https://fastapi.maludb.org`: 14/14 read-only pass; 15/15 with `RUN_WRITE=1`; removed the regression row afterward.
 - Committed & pushed.
 
+### Prompt 12
+> This isn't quite what I want I want curl commands like: [example] that I can [run] from my desktop.
+
+**Actions:**
+- Added `tests/subjects_curls.sh` — a plain list of standalone, copy-paste curl commands (one per case, each preceded by an expected-result comment), matching the user's preferred multi-line `\` style with the dev token inlined. Committed.
+
+### Prompt 13
+> Perfect, let's move on to the next endpoint.
+
+**Actions:**
+- Built `html/v1/subjects_id.php` (`/v1/subjects/{id}`):
+  - `GET` → subject detail with embedded `verbs[]` (joined `maludb_subject_verb`→`maludb_verb` by name) and `related_subjects[]` (from `maludb_subject_relationship`, returning the *other* endpoint with `relationship_type`/`relationship_label`/`direction`). `404 not_found` if absent.
+  - `PATCH` → updates `label`/`type`/`description`/`classifier_md` (maps `label`→`canonical_name`, `type`→`subject_type`); `404` if missing, `400 bad_request` if no fields, `422 validation_failed` on empty label; returns the updated detail.
+  - `DELETE` → removes the subject; `200 {deleted:true,id}` or `404`.
+  - `405` for other methods.
+- Verified the full lifecycle live (create → GET → PATCH → 400/422 paths → 405 → DELETE → 404) on a throwaway subject; DB left clean. This also confirms the 2-segment rewrite (`/v1/subjects/{id}` → `subjects_id.php?id=N`).
+- Appended matching copy-paste commands to `tests/subjects_curls.sh`. Committed & pushed.
+
 ---
 
 ## 2026-05-26 — Bootstrap & spec docs

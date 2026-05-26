@@ -63,3 +63,51 @@ curl -s -X POST 'https://fastapi.maludb.org/v1/subjects' \
 curl -s -X PATCH 'https://fastapi.maludb.org/v1/subjects' \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
     -H 'Accept: application/json'
+
+
+# ===========================================================================
+#  /v1/subjects/{id}   (detail / update / delete)
+# ===========================================================================
+
+# --- GET detail -> 200 {"subject":{ ..., "verbs":[...], "related_subjects":[...] }}
+curl -s -X GET 'https://fastapi.maludb.org/v1/subjects/9' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+
+# --- GET missing id -> 404 {"error":{"code":"not_found", ...}}
+curl -s -X GET 'https://fastapi.maludb.org/v1/subjects/999999' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+
+# --- PATCH update -> 200, returns updated detail
+#     MUTATES the row. Replace 18 with a throwaway subject id (see POST create above).
+curl -s -X PATCH 'https://fastapi.maludb.org/v1/subjects/18' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -d '{"label":"Renamed Subject","description":"updated via curl"}'
+
+# --- PATCH no fields -> 400 {"error":{"code":"bad_request", ...}}
+curl -s -X PATCH 'https://fastapi.maludb.org/v1/subjects/18' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -d '{}'
+
+# --- PATCH empty label -> 422 {"error":{"code":"validation_failed", ...}}
+curl -s -X PATCH 'https://fastapi.maludb.org/v1/subjects/18' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -d '{"label":"  "}'
+
+# --- POST on detail URL -> 405 {"error":{"code":"method_not_allowed", ...}}
+curl -s -X POST 'https://fastapi.maludb.org/v1/subjects/18' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+
+# --- DELETE -> 200 {"deleted":true,"id":18}
+#     DESTRUCTIVE. Replace 18 with a throwaway subject id.
+curl -s -X DELETE 'https://fastapi.maludb.org/v1/subjects/18' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'

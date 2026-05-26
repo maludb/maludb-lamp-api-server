@@ -70,4 +70,8 @@ Test row removed after verification.
 - Verified live against `https://fastapi.maludb.org` (vhost → `/var/www/html`; user enabled mod_rewrite + AllowOverride so clean URLs resolve).
 - **Decision A:** list keeps counts; detail (`/v1/subjects/{id}`) embeds `verbs[]` + `related_subjects[]`; sub-endpoints stay for compat. List also gains a `related_subjects` count.
 - [x] Added `related_subjects` count to `GET /v1/subjects` (count of `maludb_subject_relationship` rows where subject is `from`/`to`). Verified live. Documented in `requirements.md` §4.10.
-- [ ] **Next endpoint:** `html/v1/subjects_id.php` — `GET` (subject + embedded `verbs[]` + `related_subjects[]`), `PATCH` (label/type/description/classifier_md), `DELETE`.
+- [x] **Endpoint 2:** `html/v1/subjects_id.php` — `GET` (subject + embedded `verbs[]` + `related_subjects[]`), `PATCH` (label/type/description/classifier_md → 200/400/422/404), `DELETE` (200/404), `405` otherwise. Verified full lifecycle live on a throwaway row. Curl commands added to `tests/subjects_curls.sh`.
+- [ ] **Endpoint 3:** `html/v1/subjects_id_verbs.php` — `GET` (list linked verbs), `POST` (link a verb, `{verb_id}`).
+- [ ] **Endpoint 4:** `html/v1/subjects_id_verbs_id.php` — `DELETE` (unlink a verb).
+- [ ] **Endpoint 5:** `html/v1/subjects_id_related-subjects.php` — `GET`, `POST` (`{related_subject_id}`).
+- [ ] **Endpoint 6:** `html/v1/subjects_id_related-subjects_id.php` — `DELETE`.
