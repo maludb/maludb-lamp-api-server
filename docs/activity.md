@@ -34,6 +34,33 @@ Chronological record of every prompt given on this project and every action take
 
 ---
 
+## 2026-05-26 — Live testing + relationship/pair design decision
+
+### Prompt 8
+> Please create a curl command that I can test with. The url is https://fastapi.maludb.org
+
+**Actions:**
+- Provided curl commands for GET/POST/auth against `https://fastapi.maludb.org/v1/subjects`.
+
+### Prompt 9 (404 from fastapi.maludb.org)
+> [curl returned Apache 404 Not Found at fastapi.maludb.org Port 80]
+
+**Actions:**
+- Diagnosed: this host (`maludb`, LAN `192.168.100.169`, Apache on :80, TLS terminated upstream) serves `/var/www/html` via the default vhost — so `fastapi.maludb.org` does reach this code. The 404 was because `mod_rewrite` is disabled and `AllowOverride None`, so `.htaccess` clean-URL rewriting is ignored. Direct `.php` returns 200.
+- User confirmed `fastapi.maludb.org` points to this project's `html/`. User enabled `mod_rewrite` + `AllowOverride All` (root) and `https://fastapi.maludb.org/v1/subjects` now returns 200 end-to-end.
+
+### Prompt 10 (design decision)
+> we need decide if we want to include subject to subject relationships, and subject verb pairs combinations and not just counts.
+
+**Actions:**
+- Inspected the relevant tables: `maludb_subject_relationship` (from/to subject ids + labels, relationship_type) and `maludb_subject_verb` (name-keyed compartments) — both currently 0 rows. `maludb_svpor_relationship` is a generic edge table (also empty). Pool-level pair views (`maludb_pool_subject_verb`) are permission-denied for our DB user; core `maludb_subject_verb`/`maludb_subject_relationship` read fine.
+- Presented three shapes (detail-embeds / list-embeds / sub-endpoints-only). **User chose A: list keeps counts, detail (`/v1/subjects/{id}`) embeds `verbs[]` + `related_subjects[]`; and add a `related_subjects` count to the list.**
+- Implemented the list change: `GET /v1/subjects` now returns `related_subjects` (count of `maludb_subject_relationship` rows touching the subject) alongside `linked_verbs`. Verified live (both 0 today — tables empty). Lint clean.
+- Documented the decision in `requirements.md` §4.10 (counts in list, full arrays in detail). Next endpoint: `subjects_id.php` (GET embeds the arrays; + PATCH/DELETE).
+- Committed & pushed.
+
+---
+
 ## 2026-05-26 — Bootstrap & spec docs
 
 ### Prompt 1 (initial)

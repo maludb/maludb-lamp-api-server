@@ -36,7 +36,10 @@ switch ($_SERVER['REQUEST_METHOD']) {
                        s.description,
                        s.classifier_md,
                        (SELECT count(*) FROM maludb_subject_verb sv
-                          WHERE sv.subject_name = s.canonical_name) AS linked_verbs
+                          WHERE sv.subject_name = s.canonical_name) AS linked_verbs,
+                       (SELECT count(*) FROM maludb_subject_relationship r
+                          WHERE r.from_subject_id = s.subject_id
+                             OR r.to_subject_id   = s.subject_id) AS related_subjects
                   FROM maludb_subject s
                   $where
                  ORDER BY s.canonical_name
@@ -44,8 +47,9 @@ switch ($_SERVER['REQUEST_METHOD']) {
 
         $rows = db_query($sql, $params);
         foreach ($rows as &$r) {
-            $r['id']           = (int) $r['id'];
-            $r['linked_verbs'] = (int) $r['linked_verbs'];
+            $r['id']               = (int) $r['id'];
+            $r['linked_verbs']     = (int) $r['linked_verbs'];
+            $r['related_subjects'] = (int) $r['related_subjects'];
         }
         unset($r);
 

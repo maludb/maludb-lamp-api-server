@@ -64,3 +64,10 @@ Test row removed after verification.
 - `subject_id` has no sequence — the `MAX(subject_id)+1` insert is fine for v1 but not
   concurrency-safe; revisit if subjects are created in parallel.
 - Left `html/test_db.php` in place (pre-existing; uses MySQL-only `SHOW TABLES`, unrelated to v1).
+
+## Follow-up (2026-05-26) — relationship/pair exposure decision
+
+- Verified live against `https://fastapi.maludb.org` (vhost → `/var/www/html`; user enabled mod_rewrite + AllowOverride so clean URLs resolve).
+- **Decision A:** list keeps counts; detail (`/v1/subjects/{id}`) embeds `verbs[]` + `related_subjects[]`; sub-endpoints stay for compat. List also gains a `related_subjects` count.
+- [x] Added `related_subjects` count to `GET /v1/subjects` (count of `maludb_subject_relationship` rows where subject is `from`/`to`). Verified live. Documented in `requirements.md` §4.10.
+- [ ] **Next endpoint:** `html/v1/subjects_id.php` — `GET` (subject + embedded `verbs[]` + `related_subjects[]`), `PATCH` (label/type/description/classifier_md), `DELETE`.

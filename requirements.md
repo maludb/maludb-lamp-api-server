@@ -361,10 +361,19 @@ Per the client's own contract note (`api-calls.md`), only `POST /v1/episodes` is
 
 ### 4.10 List denormalization
 
-To avoid N+1 calls from the client, list endpoints embed count fields in each row:
+To avoid N+1 calls from the client, list endpoints embed **count** fields in each row;
+the full related collections are embedded in the single-resource **detail** response, not the list
+(decision 2026-05-26 — keeps lists cheap, makes detail a one-call fetch).
 
-- `GET /v1/subjects` → each row includes `linked_verbs` (count of rows in `subject_verbs` for that subject).
-- `GET /v1/verbs` → each row includes `linked_subjects` (count of rows in `subject_verbs` for that verb).
+- `GET /v1/subjects` → each row includes:
+  - `linked_verbs` — count of `maludb_subject_verb` rows where `subject_name = canonical_name`.
+  - `related_subjects` — count of `maludb_subject_relationship` rows where the subject is either endpoint (`from_subject_id` or `to_subject_id`).
+- `GET /v1/verbs` → each row includes `linked_subjects` (count of `maludb_subject_verb` rows where `verb_name = canonical_name`).
+
+**Detail embedding** (`GET /v1/subjects/{id}`) returns the subject plus the full arrays inline:
+- `verbs` — the linked verbs (same data as `GET /v1/subjects/{id}/verbs`).
+- `related_subjects` — the related subjects with `relationship_type`/`label` and the other subject's id+label (same data as `GET /v1/subjects/{id}/related-subjects`).
+The dedicated sub-endpoints remain for backward compatibility with the current desktop client.
 
 Other list endpoints may add similar fields as the client surfaces concrete need. Each addition is recorded here.
 
