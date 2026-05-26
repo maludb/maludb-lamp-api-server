@@ -129,6 +129,19 @@ Chronological record of every prompt given on this project and every action take
 - Wrote `docs/db-requirements.md` requesting granted `maludb_subject_verb_link`/`_unlink` functions from the DBMS project (to lift the verb-link 501s later). Added `501 not_implemented` to the §2.3 status table.
 - Verified the full related-subjects lifecycle live against `fastapi.maludb.org` (link/dupe/self/missing/bidirectional visibility/custom type/delete-both/404); DB left clean. Committed.
 
+### Prompt 24 (continue → Phase 6)
+> Yes, please continue
+
+**Actions:**
+- **Built Phase 6 (Skills, §4.8):**
+  - `skills.php` — GET (`visibility`/`q`/`limit` filters) + POST (insert into `maludb_skill`; defaults version `1.0.0`/visibility `private`/enabled true). name→skill_name.
+  - `skills_id.php` — GET / PATCH / DELETE (the skill view supports DELETE → clean CRUD).
+  - `skills_id_duplicate.php` — POST via `maludb_skill_fork`; forking is DB-gated (only forkable/published skills), so a non-forkable source is caught and returned as `422 validation_failed`; 201 on success.
+  - DB enforces visibility ∈ {private,shared,public} and packaging_kind ∈ {system_prompt,markdown,mcp_tool,plugin} → surfaced as 422.
+  - One copy-paste curl test file per endpoint (self-cleaning via DELETE).
+- Noted in `db-requirements.md` §4 that the skill **body/markdown** isn't exposed by `maludb_skill` (metadata-only via the API).
+- Verified the full lifecycle live; DB left clean. Committed.
+
 ### Prompt 23 (decisions: keep link writes deferred; continue to Phase 5)
 > [keep link writes deferred until unlink helpers exist] + [continue to Phase 5]
 

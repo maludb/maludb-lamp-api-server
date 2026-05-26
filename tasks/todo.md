@@ -128,10 +128,12 @@ Test row removed after verification.
 - [x] `pools_id_archive.php` — POST sets lifecycle_state='archived'+archived_at; 409 already_archived; 404. + `tests/pools_id_archive_curls.sh`
 - Verified full lifecycle live (create/detail/patch/archive/409/405/404). Test pool id=8 left **tombstoned** (can't hard-delete — no grant); flagged to user.
 
-## Phase 6 — Skills (§4.8)
-- [ ] `skills.php` — GET (`visibility` filter) / POST. + test file
-- [ ] `skills_id.php` — GET/PATCH/DELETE. + test file
-- [ ] `skills_id_duplicate.php` — POST (201, returns new skill). + test file
+## Phase 6 — Skills (§4.8) ✓ DONE
+- **Finding:** `maludb_skill` is a direct-INSERT view, **DELETE works** (clean CRUD); `skill_id` sequence-assigned; defaults version `1.0.0`/visibility `private`/enabled true; visibility ∈ {private,shared,public} & packaging_kind ∈ {system_prompt,markdown,mcp_tool,plugin} (DB-enforced → 422). View exposes no skill body/markdown (db-requirements §4). name→skill_name.
+- [x] `skills.php` — GET (`visibility`/`q`/`limit`) + POST. + `tests/skills_curls.sh`
+- [x] `skills_id.php` — GET / PATCH / DELETE. + `tests/skills_id_curls.sh`
+- [x] `skills_id_duplicate.php` — POST via `maludb_skill_fork` (catches non-forkable → 422); 201 on success. + `tests/skills_id_duplicate_curls.sh`
+- Verified full lifecycle live (create/GET/visibility-filter/PATCH/422/DELETE/404); DB left clean (DELETE works). Duplicate happy-path needs a forkable/published source skill.
 
 ## Phase 7 — Notes (§4.5)
 - [ ] `notes.php` — GET/POST `{title, body, type?, project_id?}`. + test file

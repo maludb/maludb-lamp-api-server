@@ -62,3 +62,14 @@ A project is a subject (`maludb_project` = `maludb_subject WHERE subject_type='p
 - Add `archived_at timestamptz` to the subject/project base (exposed via `maludb_project`),
   **or** provide `maludb_project_archive(p_project_id)` / `maludb_project_unarchive(p_project_id)`
   (granted to `zozocal`). The API will then enforce `409 already_archived` / `not_archived`.
+
+## 4. Skill body / markdown not exposed (limits `/v1/skills` to metadata)
+
+**Status:** not blocking — skill CRUD works for metadata; just a coverage gap.
+
+The `maludb_skill` facade view exposes `skill_name, description, version, visibility,
+packaging_kind, applicability_jsonb, precondition_jsonb, enabled, …` but **not the skill's
+markdown/body content** (the base table has a NOT NULL `markdown` the view fills with a
+default). So the API can't read or write a skill's actual content. If skill-content management
+is wanted via the API, expose a `markdown`/`body` column on `maludb_skill` (or add a
+`maludb_skill_set_body(skill_id, markdown)` helper).
