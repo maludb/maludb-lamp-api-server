@@ -129,6 +129,15 @@ Chronological record of every prompt given on this project and every action take
 - Wrote `docs/db-requirements.md` requesting granted `maludb_subject_verb_link`/`_unlink` functions from the DBMS project (to lift the verb-link 501s later). Added `501 not_implemented` to the §2.3 status table.
 - Verified the full related-subjects lifecycle live against `fastapi.maludb.org` (link/dupe/self/missing/bidirectional visibility/custom type/delete-both/404); DB left clean. Committed.
 
+### Prompt 22 (facade write-path reference)
+> Before we go to 5 … how to write to each facade view [Groups A/B/C reference]
+
+**Actions:**
+- Recorded the authoritative write-path map in `docs/db-write-paths.md` (48 direct-INSERT views, 8 helper-required, 6 orchestration helpers), with live-verified annotations.
+- **Verified against the live DB:** all listed helpers exist and `zozocal` has EXECUTE; `maludb_subject_relationship` (related-subjects) is indeed direct-INSERT (matches what was built); `maludb_memory_pool` has `archived_at`/`lifecycle_state` (pool archive is doable); `svpor_relationship_create.relationship_type` is FK-constrained to `malu$relationship_type` (16 valid values incl. `has_member`, `part_of`, `related_to`); **DELETE is rejected on all helper-only views and no `*_unlink`/`*_delete` helpers exist** → link removal still blocked.
+- Reconciled `docs/db-requirements.md`: create side is now unblocked via helpers; the real outstanding asks are (1) unlink/delete helpers (blocks all link DELETE + PUT-replace), (2) subject-verb embedding config or a simple `maludb_subject_verb_link`, (3) project archive column/functions.
+- Committed the docs. (No endpoint code changed this turn.)
+
 ### Prompt 21 (continue Phase 4 while user resolves db-requirements)
 > You continue with Phase 4 while I resolve the db-requirements.md issues
 
