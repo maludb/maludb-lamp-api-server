@@ -87,6 +87,24 @@ Chronological record of every prompt given on this project and every action take
 
 ---
 
+## 2026-05-27 — Remaining db-requirements completed server-side
+
+### Prompt 30
+> According to the database the remainder of db-requirements.md have been completed.
+
+**Verified live the DBMS project added:** `maludb_svpor_relationship_delete(...)`,
+`maludb_subject.archived_at` + `maludb_project_archive`/`_unarchive(p_project_id)`,
+`maludb_skill.markdown`, `validate_payload(...)` (memory now writable),
+`maludb_memory.issue_closed_at`. (No public episode wrapper — §6 stays as the
+search_path approach, which is fine.)
+
+**Batch 1 — Projects (§4.6) now fully implemented:**
+- `projects_id_subjects_id.php` / `projects_id_verbs_id.php` — DELETE via `maludb_svpor_relationship_delete` (200/404).
+- `projects_id_subjects.php` / `projects_id_verbs.php` — added **PUT** (replace set; transactional delete-then-add).
+- `projects_id_archive.php` / `projects_id_unarchive.php` — via `maludb_project_archive`/`_unarchive` (409 already_archived / not_archived).
+- `archived_at` surfaced on project list + detail.
+- Verified full lifecycle live on a throwaway project (link/dup-409/PUT-replace/DELETE/404/archive-409/unarchive-409); DB left clean. Updated the 6 sub-resource curl test files (now self-cleaning) and db-requirements §1.2/§3 (resolved). Committed.
+
 ## 2026-05-27 — Subject↔verb linking (un-deferred)
 
 ### Prompt 28

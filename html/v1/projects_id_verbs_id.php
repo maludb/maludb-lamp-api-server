@@ -2,26 +2,28 @@
 /**
  * /v1/projects/{id}/verbs/{vid}  (requirements.md §4.6)
  *
- *   DELETE  Unlink one verb from the project.
- *
- * NOT IMPLEMENTED in v1: see projects_id_verbs.php / docs/db-requirements.md
- * (SVPOR edge writes need a granted DBMS-project function).
+ *   DELETE  Unlink one verb from the project (removes the 'has_member' SVPOR edge
+ *           via maludb_svpor_relationship_delete). 404 if no such link.
  */
 
 require_once __DIR__ . '/../../config/response.php';
 
 require_auth();
-path_id();
-path_sub_id();
+$id  = path_id();
+$vid = path_sub_id();
 
 switch ($_SERVER['REQUEST_METHOD']) {
 
-    case 'DELETE':
-        json_error(
-            'not_implemented',
-            'Unlinking a verb from a project removes an SVPOR graph edge, which requires a DBMS-project function not available to the API yet. See docs/db-requirements.md.',
-            501
+    case 'DELETE': {
+        $row = db_one(
+            "SELECT maludb_svpor_relationship_delete('subject', ?, 'verb', ?, 'has_member') AS removed",
+            [$id, $vid]
         );
+        if ((int) $row['removed'] === 0) {
+            json_error('not_found', 'That verb is not linked to the project.', 404);
+        }
+        json_response(['deleted' => true, 'id' => $id, 'verb_id' => $vid]);
+    }
 
     default:
         header('Allow: DELETE');

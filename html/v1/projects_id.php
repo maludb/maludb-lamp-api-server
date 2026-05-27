@@ -18,7 +18,7 @@ $id = path_id();
 /** Fetch a project (subject of type 'project') with linked subjects[]/verbs[], or null. */
 function load_project_detail(int $id): ?array {
     $project = db_one(
-        "SELECT subject_id AS id, canonical_name AS name, description, classifier_md
+        "SELECT subject_id AS id, canonical_name AS name, description, classifier_md, archived_at
            FROM maludb_project
           WHERE subject_id = ?",
         [$id]

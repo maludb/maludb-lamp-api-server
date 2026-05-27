@@ -31,7 +31,8 @@ switch ($_SERVER['REQUEST_METHOD']) {
         $sql = "SELECT subject_id     AS id,
                        canonical_name AS name,
                        description,
-                       classifier_md
+                       classifier_md,
+                       archived_at
                   FROM maludb_project
                   $where
                  ORDER BY canonical_name

@@ -61,12 +61,68 @@ switch ($_SERVER['REQUEST_METHOD']) {
         json_response(['subject' => $subject, 'edge_id' => (int) $row['edge_id']], 201);
     }
 
-    case 'PUT':
-        json_error(
-            'not_implemented',
-            'Replacing a project\'s subject set requires removing existing links, which needs the SVPOR delete helper not available yet. See docs/db-requirements.md §1.',
-            501
+    case 'PUT': {
+        if (db_one("SELECT 1 FROM maludb_project WHERE subject_id = ?", [$id]) === null) {
+            json_error('not_found', 'Project not found.', 404);
+        }
+        $body = body_json();
+        if (!array_key_exists('subject_ids', $body) || !is_array($body['subject_ids'])) {
+            json_error('missing_field', 'Field "subject_ids" (array of integers) is required.', 400);
+        }
+        $want = [];
+        foreach ($body['subject_ids'] as $v) {
+            if (!is_int($v)) {
+                json_error('validation_failed', 'subject_ids must be integers.', 422);
+            }
+            if ($v === $id) {
+                json_error('validation_failed', 'A project cannot link to itself.', 422);
+            }
+            if (db_one("SELECT 1 FROM maludb_subject WHERE subject_id = ?", [$v]) === null) {
+                json_error('validation_failed', "subject_id $v does not refer to an existing subject.", 422);
+            }
+            $want[$v] = true;
+        }
+        $want = array_keys($want);
+
+        $pdo = Database::getInstance()->getConnection();
+        try {
+            $pdo->beginTransaction();
+            $cur = array_map('intval', array_column(
+                db_query("SELECT target_id FROM maludb_svpor_relationship
+                           WHERE source_kind='subject' AND source_id=? AND target_kind='subject'
+                             AND relationship_type='has_member'", [$id]),
+                'target_id'
+            ));
+            foreach ($cur as $c) {
+                if (!in_array($c, $want, true)) {
+                    db_one("SELECT maludb_svpor_relationship_delete('subject', ?, 'subject', ?, 'has_member')", [$id, $c]);
+                }
+            }
+            foreach ($want as $w) {
+                if (!in_array($w, $cur, true)) {
+                    db_one("SELECT maludb_svpor_relationship_create('subject', ?, 'subject', ?, 'has_member', NULL, '{}'::jsonb, NULL)", [$id, $w]);
+                }
+            }
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            throw $e;
+        }
+
+        $subjects = db_query(
+            "SELECT s.subject_id AS id, s.canonical_name AS name, s.subject_type AS type
+               FROM maludb_svpor_relationship r
+               JOIN maludb_subject s ON s.subject_id = r.target_id
+              WHERE r.source_kind='subject' AND r.source_id=? AND r.target_kind='subject'
+                AND r.relationship_type='has_member'
+              ORDER BY s.canonical_name",
+            [$id]
         );
+        foreach ($subjects as &$x) { $x['id'] = (int) $x['id']; }
+        unset($x);
+
+        json_response(['subjects' => $subjects]);
+    }
 
     default:
         header('Allow: POST, PUT');
