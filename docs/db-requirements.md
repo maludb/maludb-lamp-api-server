@@ -29,10 +29,14 @@ The remaining helper views are **not deletable** (`DELETE FROM <view>` → "cann
 view"). Requested, granted to `zozocal`:
 
 1. ~~`maludb_subject_verb_unlink(...)`~~ ✅ done (and `maludb_subject_verb_link(...)`).
-2. `maludb_svpor_relationship_delete(p_source_kind, p_source_id, p_target_kind, p_target_id,
-   p_relationship_type DEFAULT NULL) RETURNS integer`
-   — blocks `DELETE /v1/projects/{id}/{subjects|verbs}/{id}` and `PUT` (replace). (A
-   `maludb_project_link_*`/`maludb_svpor_relationship_create` create-side already exists.)
+2. **`maludb_svpor_relationship_delete(p_source_kind, p_source_id, p_target_kind, p_target_id,
+   p_relationship_type DEFAULT NULL) RETURNS integer`** — **STILL NEEDED.** The create side
+   (`maludb_svpor_relationship_create`) exists and `POST /v1/projects/{id}/{subjects|verbs}` is
+   now implemented, but **`DELETE /v1/projects/{id}/{subjects|verbs}/{id}` and `PUT` (replace)
+   remain `501`** without this. Until it lands, project links created via POST are **permanent**
+   (the API can't remove them). Also: `maludb_svpor_relationship_create` is **not idempotent**
+   and does **not** FK-validate the target — the API dedupes + checks existence to compensate;
+   a server-side unique guard / FK would be more robust.
 3. `maludb_pool_remove_named_member(p_pool_name, p_member_kind, p_member_name) RETURNS integer`
    — for removing pool members (not in v1 scope, but noted).
 

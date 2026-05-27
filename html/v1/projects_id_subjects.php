@@ -2,27 +2,69 @@
 /**
  * /v1/projects/{id}/subjects  (requirements.md §4.6)
  *
- *   POST  Link one subject ({subject_id}).
- *   PUT   Replace the full set ({subject_ids: [...]}).
+ *   POST  Link one subject ({subject_id}) via maludb_svpor_relationship_create
+ *         ('subject', project_id, 'subject', subject_id, 'has_member').
+ *   PUT   Replace the full set — NOT IMPLEMENTED (needs the svpor delete helper to
+ *         remove existing edges; see docs/db-requirements.md §1).
  *
- * NOT IMPLEMENTED in v1: project↔subject links are SVPOR graph edges
- * (maludb_svpor_relationship → malu$relationship_edge), a multi-table view the API
- * user cannot insert into. Needs a granted DBMS-project function — see
- * docs/db-requirements.md. (Linked subjects are already readable via GET /v1/projects/{id}.)
+ * The create helper is not idempotent and does not validate the target, so the API
+ * checks existence + dedupes. Linked subjects are readable via GET /v1/projects/{id}.
  */
 
 require_once __DIR__ . '/../../config/response.php';
 
 require_auth();
-path_id();
+$id = path_id();
 
 switch ($_SERVER['REQUEST_METHOD']) {
 
-    case 'POST':
+    case 'POST': {
+        if (db_one("SELECT 1 FROM maludb_project WHERE subject_id = ?", [$id]) === null) {
+            json_error('not_found', 'Project not found.', 404);
+        }
+
+        $body = body_json();
+        if (!array_key_exists('subject_id', $body) || !is_int($body['subject_id'])) {
+            json_error('missing_field', 'Field "subject_id" (integer) is required.', 400);
+        }
+        $sid = (int) $body['subject_id'];
+        if ($sid === $id) {
+            json_error('validation_failed', 'A project cannot link to itself.', 422);
+        }
+
+        $subject = db_one(
+            "SELECT subject_id AS id, canonical_name AS name, subject_type AS type
+               FROM maludb_subject WHERE subject_id = ?",
+            [$sid]
+        );
+        if ($subject === null) {
+            json_error('validation_failed', 'subject_id does not refer to an existing subject.', 422);
+        }
+
+        // The svpor create helper is not idempotent — dedupe here.
+        $dup = db_one(
+            "SELECT 1 FROM maludb_svpor_relationship
+              WHERE source_kind='subject' AND source_id=? AND target_kind='subject'
+                AND target_id=? AND relationship_type='has_member'",
+            [$id, $sid]
+        );
+        if ($dup !== null) {
+            json_error('conflict', 'That subject is already linked to the project.', 409);
+        }
+
+        $row = db_one(
+            "SELECT maludb_svpor_relationship_create('subject', ?, 'subject', ?, 'has_member', NULL, '{}'::jsonb, NULL) AS edge_id",
+            [$id, $sid]
+        );
+        $subject['id'] = (int) $subject['id'];
+
+        json_response(['subject' => $subject, 'edge_id' => (int) $row['edge_id']], 201);
+    }
+
     case 'PUT':
         json_error(
             'not_implemented',
-            'Linking subjects to a project writes an SVPOR graph edge, which requires a DBMS-project function not available to the API yet. See docs/db-requirements.md.',
+            'Replacing a project\'s subject set requires removing existing links, which needs the SVPOR delete helper not available yet. See docs/db-requirements.md §1.',
             501
         );
 

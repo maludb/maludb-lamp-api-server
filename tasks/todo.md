@@ -113,10 +113,11 @@ Test row removed after verification.
 - **Finding:** `maludb_project` is a view of `maludb_subject WHERE subject_type='project'` — a project IS a subject (project id = subject_id). No archive column; links live in the non-insertable SVPOR graph. Projects expose `name` (→ canonical_name).
 - [x] `projects.php` — GET (q/limit) + POST (create subject type='project'). + `tests/projects_curls.sh`
 - [x] `projects_id.php` — GET (+ embedded `subjects[]`/`verbs[]` read from SVPOR edges), PATCH, DELETE (all scoped to type='project'). + `tests/projects_id_curls.sh`
-- [x] `projects_id_subjects.php` — POST/PUT → **501** (SVPOR edge not insertable). + test file
-- [x] `projects_id_subjects_id.php` — DELETE → **501**. + test file
-- [x] `projects_id_verbs.php` — POST/PUT → **501**. + test file
-- [x] `projects_id_verbs_id.php` — DELETE → **501**. + test file
+- [x] `projects_id_subjects.php` — **POST** link via `maludb_svpor_relationship_create` ('has_member'; 404/400/422/409/201, API-side dedupe+validation). PUT → **501** (needs svpor delete). ✅ POST implemented 2026-05-27. + test file
+- [x] `projects_id_subjects_id.php` — DELETE → **501** (needs svpor delete helper). + test file
+- [x] `projects_id_verbs.php` — **POST** link via svpor create. PUT → **501**. ✅ POST implemented 2026-05-27. + test file
+- [x] `projects_id_verbs_id.php` — DELETE → **501** (needs svpor delete helper). + test file
+- ⚠ POST-created project links are **permanent** until the SVPOR delete helper (db-requirements §1.2) lands.
 - [x] `projects_id_archive.php` — POST → **501** (no archive column). + test file
 - [x] `projects_id_unarchive.php` — POST → **501**. + test file
 - [x] `docs/db-requirements.md` §2 (project↔subject/verb link functions) + §3 (archive column/functions). Verified all 8 live; DB left clean.

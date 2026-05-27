@@ -97,6 +97,14 @@ Chronological record of every prompt given on this project and every action take
 - **Implemented** `subjects_id_verbs.php` POST (link `{verb_id}`: 404 missing subject, 400 missing field, 422 nonexistent verb, 409 already-linked, 201 with verb + compartment_id) and `subjects_id_verbs_id.php` DELETE (unlink: 200 / 404). Removed the 501 stubs.
 - Verified the exact failing call now returns 201; full lifecycle (link/dup/bad/missing/list/embed/delete/404) passes live; DB left clean. Updated both curl test files, `db-requirements.md` §1/§2 (subject↔verb marked resolved), `requirements.md`, `tasks/todo.md`. Committed.
 
+### Prompt 29 (wire up project link creation)
+> Yes [+ re-pasted the now-fixed subject↔verb 501]
+
+**Actions:**
+- Re-confirmed the subject↔verb POST returns **201** live (the pasted 501 was the pre-fix response; OpCache revalidates in 2s).
+- Implemented **POST** on `projects_id_subjects.php` / `projects_id_verbs.php` via `maludb_svpor_relationship_create('subject', project_id, 'subject'|'verb', target_id, 'has_member')`. The helper is **not idempotent** and **doesn't FK-validate the target**, so the API checks project (404), field (400), self/nonexistent target (422), and dedupes (409) before creating. `PUT` (replace) and the `_id` `DELETE`s stay **501** — they need the SVPOR delete helper (db-requirements §1.2), so POST-created project links are currently permanent.
+- Verified create + readback via rolled-back probe; live-tested only the non-destructive validation paths (404/400/422/501/405) to avoid leaving un-removable test edges (confirmed 0 stray edges). Updated the two curl test files (POST marked permanent), `db-requirements.md` §1, `tasks/todo.md`. Committed.
+
 ---
 
 ## 2026-05-26 — Build plan + Phase 1 (Verbs)
