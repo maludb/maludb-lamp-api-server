@@ -137,13 +137,13 @@ Test row removed after verification.
 - [x] `skills_id_duplicate.php` — POST via `maludb_skill_fork` (catches non-forkable → 422); 201 on success. + `tests/skills_id_duplicate_curls.sh`
 - Verified full lifecycle live (create/GET/visibility-filter/PATCH/422/DELETE/404); DB left clean (DELETE works). Duplicate happy-path needs a forkable/published source skill.
 
-## Phase 7 — Notes (§4.5) ⏸ DEFERRED (blocked on server-side work)
-- **Not built** (user direction 2026-05-26): skip Notes, do Documents next; full server-side
-  requirements written in `docs/db-requirements.md` §5 for the user to fix, then we return.
-- Blockers verified live: (1) `maludb_memory` writes fail — missing `validate_payload(...)` fn;
-  (2) `maludb_quick_add_note` permission-denied (`_upload_document_for_schema`); (3) no issue/
-  closed state in the schema; (4) document/note body not exposed by `maludb_document`.
-- [ ] `notes.php`, `notes_id.php`, `notes_id_close-issue.php`, `notes_id_reopen-issue.php` — pending DB fixes (db-requirements §5).
+## Phase 7 — Notes (§4.5) ✓ DONE (2026-05-27, after server-side fixes)
+- Server added `validate_payload(...)` (memory writable) + `maludb_memory.issue_closed_at`. Notes = `maludb_memory` (id→memory_id, title→title, body→summary, type→memory_kind, project_id→payload).
+- [x] `notes.php` — GET (q/type/limit) + POST `{title, body?, type?, project_id?}`. + `tests/notes_curls.sh`
+- [x] `notes_id.php` — GET/PATCH/DELETE. + `tests/notes_id_curls.sh`
+- [x] `notes_id_close-issue.php` — POST (409 if not issue / already closed). + test file
+- [x] `notes_id_reopen-issue.php` — POST (409 if not issue / not closed). + test file
+- Verified full note + issue lifecycle live; DB left clean.
 
 ## Phase 8 — Documents (§4.4) ✓ DONE
 - **Resolved:** no storage decision needed — `maludb_source_package.content_bytes` (bytea) stores bytes in-DB; `maludb_document` holds metadata. Both direct-INSERT, ids sequence-assigned, DELETE works (no orphans).

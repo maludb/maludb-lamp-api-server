@@ -105,6 +105,14 @@ search_path approach, which is fine.)
 - `archived_at` surfaced on project list + detail.
 - Verified full lifecycle live on a throwaway project (link/dup-409/PUT-replace/DELETE/404/archive-409/unarchive-409); DB left clean. Updated the 6 sub-resource curl test files (now self-cleaning) and db-requirements §1.2/§3 (resolved). Committed.
 
+**Batch 2 — Skills body (§4):** `maludb_skill.markdown` now exists → added `markdown` to `skills.php` POST and `skills_id.php` GET/PATCH (list stays metadata-only). Verified round-trip live. Committed.
+
+**Batch 3 — Notes (§4.5), now fully built:**
+- `notes.php` (GET q/type/limit + POST), `notes_id.php` (GET/PATCH/DELETE), `notes_id_close-issue.php` + `notes_id_reopen-issue.php` (POST, 409 rules). Backed by `maludb_memory` (validate_payload + issue_closed_at added server-side): id→memory_id, title→title, body→summary, type→memory_kind (free-text; `issue` enables close/reopen), project_id→payload.
+- Verified full note + issue lifecycle live (create/GET/PATCH/clear-project/delete; close/409-reclose/reopen/409-rereopen; close non-issue→409); DB left clean. 4 self-cleaning curl test files. requirements.md/db-requirements §5 updated. Committed.
+
+**Result: all 32 endpoint files are now implemented** (no remaining 501s). db-requirements §6 (episode public wrapper) remains a non-blocking nice-to-have.
+
 ## 2026-05-27 — Subject↔verb linking (un-deferred)
 
 ### Prompt 28
