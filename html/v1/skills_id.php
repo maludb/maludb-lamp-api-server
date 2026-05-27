@@ -16,7 +16,7 @@ $id = path_id();
 
 function load_skill(int $id): ?array {
     $skill = db_one(
-        "SELECT skill_id AS id, skill_name AS name, description, version,
+        "SELECT skill_id AS id, skill_name AS name, description, markdown, version,
                 visibility, packaging_kind, enabled, created_at, updated_at
            FROM maludb_skill
           WHERE skill_id = ?",
@@ -56,7 +56,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
             }
             $fields[] = 'skill_name = ?'; $params[] = $name;
         }
-        foreach (['description', 'version', 'visibility', 'packaging_kind'] as $f) {
+        foreach (['description', 'markdown', 'version', 'visibility', 'packaging_kind'] as $f) {
             if (array_key_exists($f, $body)) {
                 $fields[] = "$f = ?";
                 $params[] = $body[$f] === null ? null : (string) $body[$f];

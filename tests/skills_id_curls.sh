@@ -22,7 +22,7 @@ curl -s -X GET "https://fastapi.maludb.org/v1/skills/$SID" \
 curl -s -X PATCH "https://fastapi.maludb.org/v1/skills/$SID" \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
     -H 'Content-Type: application/json' -H 'Accept: application/json' \
-    -d '{"description":"patched","version":"1.1.0","enabled":false}'
+    -d '{"description":"patched","markdown":"# Updated body","version":"1.1.0","enabled":false}'
 
 # PATCH no fields -> 400 ; POST on detail -> 405
 curl -s -X PATCH "https://fastapi.maludb.org/v1/skills/$SID" \

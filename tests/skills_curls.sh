@@ -32,7 +32,7 @@ curl -s -X PATCH 'https://fastapi.maludb.org/v1/skills' \
 SID=$(curl -s -X POST 'https://fastapi.maludb.org/v1/skills' \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
     -H 'Content-Type: application/json' -H 'Accept: application/json' \
-    -d '{"name":"skill-create-test","description":"d","visibility":"private","packaging_kind":"markdown"}' \
+    -d '{"name":"skill-create-test","description":"d","markdown":"# Title\n\nbody","visibility":"private","packaging_kind":"markdown"}' \
     | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
 echo "created skill id=$SID"
 curl -s -X DELETE "https://fastapi.maludb.org/v1/skills/$SID" \

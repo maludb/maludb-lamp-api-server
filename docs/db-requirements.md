@@ -101,13 +101,7 @@ would let the API drop the search_path manipulation. Not required — current be
 (episodes are tenant-owned). Also: episode read/list/get endpoints are out of v1; if added later,
 a `maludb_episode` facade view (RLS-scoped) would be needed.
 
-## 4. Skill body / markdown not exposed (limits `/v1/skills` to metadata)
+## 4. Skill body / markdown — ✅ RESOLVED (2026-05-27)
 
-**Status:** not blocking — skill CRUD works for metadata; just a coverage gap.
-
-The `maludb_skill` facade view exposes `skill_name, description, version, visibility,
-packaging_kind, applicability_jsonb, precondition_jsonb, enabled, …` but **not the skill's
-markdown/body content** (the base table has a NOT NULL `markdown` the view fills with a
-default). So the API can't read or write a skill's actual content. If skill-content management
-is wanted via the API, expose a `markdown`/`body` column on `maludb_skill` (or add a
-`maludb_skill_set_body(skill_id, markdown)` helper).
+`maludb_skill` now exposes a `markdown` column. `/v1/skills` POST and `/v1/skills/{id}`
+GET/PATCH read & write the skill body via `markdown` (the list stays metadata-only).
