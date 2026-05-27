@@ -87,6 +87,18 @@ Chronological record of every prompt given on this project and every action take
 
 ---
 
+## 2026-05-27 — Subject↔verb linking (un-deferred)
+
+### Prompt 28
+> We need to implement: POST /v1/subjects/17/verbs {verb_id:5} … [returning 501]
+
+**Actions:**
+- The DBMS project added the helpers requested in db-requirements §1/§2: `public.maludb_subject_verb_link(subject_id, verb_id)` (idempotent, returns compartment_id) and `maludb_subject_verb_unlink(subject_id, verb_id)` (returns rows removed), both granted. Verified live (idempotent re-link, FK violation → 23503 on bad ids, listing reflects the link).
+- **Implemented** `subjects_id_verbs.php` POST (link `{verb_id}`: 404 missing subject, 400 missing field, 422 nonexistent verb, 409 already-linked, 201 with verb + compartment_id) and `subjects_id_verbs_id.php` DELETE (unlink: 200 / 404). Removed the 501 stubs.
+- Verified the exact failing call now returns 201; full lifecycle (link/dup/bad/missing/list/embed/delete/404) passes live; DB left clean. Updated both curl test files, `db-requirements.md` §1/§2 (subject↔verb marked resolved), `requirements.md`, `tasks/todo.md`. Committed.
+
+---
+
 ## 2026-05-26 — Build plan + Phase 1 (Verbs)
 
 ### Prompts 14–16

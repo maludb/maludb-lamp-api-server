@@ -19,37 +19,30 @@ These are **no longer blockers for creation** — the granted helpers exist:
 
 What remains outstanding:
 
-## 1. Unlink / delete helpers (blocks every link `DELETE`, and `PUT` "replace")
+## 1. Unlink / delete helpers (blocks remaining link `DELETE`, and `PUT` "replace")
 
-**Status:** `DELETE`/`PUT` on link endpoints return `501 not_implemented`.
+**Status:** ✅ **subject↔verb resolved** — `maludb_subject_verb_link`/`_unlink` were added and
+`POST`/`DELETE /v1/subjects/{id}/verbs[/{verbId}]` are now implemented (2026-05-27).
+Still outstanding for **projects** and **pools**:
 
-The helper views are **not deletable** (`DELETE FROM <view>` → "cannot delete from view") and
-there is **no `*_unlink` / `*_delete` helper**. So links created via helpers can't be removed,
-and a `PUT` that replaces a set (delete-then-add) is impossible. Requested, all granted to
-`zozocal`:
+The remaining helper views are **not deletable** (`DELETE FROM <view>` → "cannot delete from
+view"). Requested, granted to `zozocal`:
 
-1. `maludb_subject_verb_unlink(p_subject_id bigint, p_verb_id bigint) RETURNS integer`
-   — blocks `DELETE /v1/subjects/{id}/verbs/{verbId}`.
+1. ~~`maludb_subject_verb_unlink(...)`~~ ✅ done (and `maludb_subject_verb_link(...)`).
 2. `maludb_svpor_relationship_delete(p_source_kind, p_source_id, p_target_kind, p_target_id,
    p_relationship_type DEFAULT NULL) RETURNS integer`
-   — blocks `DELETE /v1/projects/{id}/{subjects|verbs}/{id}` and `PUT` (replace).
+   — blocks `DELETE /v1/projects/{id}/{subjects|verbs}/{id}` and `PUT` (replace). (A
+   `maludb_project_link_*`/`maludb_svpor_relationship_create` create-side already exists.)
 3. `maludb_pool_remove_named_member(p_pool_name, p_member_kind, p_member_name) RETURNS integer`
-   — blocks removing pool members (Phase 5).
+   — for removing pool members (not in v1 scope, but noted).
 
-## 2. Subject↔verb linking needs embedding config (blocks `POST /v1/subjects/{id}/verbs`)
+## 2. Subject↔verb linking — ✅ RESOLVED (2026-05-27)
 
-**Status:** `POST` returns `501`.
-
-`maludb_subject_verb_create` requires `p_namespace`, `p_embedding_dim`, `p_embedding_model`
-(distance defaults to `cosine`). The client contract is `POST {verb_id}` only, and the API has
-no basis to choose embedding parameters. **Requested (pick one):**
-
-- A simple `maludb_subject_verb_link(p_subject_id bigint, p_verb_id bigint) RETURNS bigint`
-  that owns the namespace + embedding defaults internally (preferred), **or**
-- Documented server-wide defaults for `namespace` / `embedding_dim` / `embedding_model` that
-  the API may pass to `maludb_subject_verb_create`.
-
-(Either way, #1's `maludb_subject_verb_unlink` is still needed for the DELETE.)
+The DBMS project added `public.maludb_subject_verb_link(p_subject_id bigint, p_verb_id bigint)
+RETURNS bigint` (idempotent; owns namespace/embedding internally) and
+`public.maludb_subject_verb_unlink(p_subject_id bigint, p_verb_id bigint) RETURNS integer`, both
+granted to `zozocal`. `POST /v1/subjects/{id}/verbs` and `DELETE /v1/subjects/{id}/verbs/{verbId}`
+now use them (no embedding decisions in the API).
 
 ## 3. Project archive state (blocks `POST /v1/projects/{id}/archive` & `/unarchive`)
 

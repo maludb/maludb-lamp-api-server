@@ -2,25 +2,25 @@
 /**
  * /v1/subjects/{id}/verbs/{verbId}  (requirements.md §4.1)
  *
- *   DELETE   Unlink a verb from a subject. NOT IMPLEMENTED in v1: there is no
- *            granted compartment-delete path for the API user (see
- *            docs/db-requirements.md).
+ *   DELETE   Unlink a verb from a subject via maludb_subject_verb_unlink(subject_id, verb_id),
+ *            which removes the vector compartment. 404 if no such link.
  */
 
 require_once __DIR__ . '/../../config/response.php';
 
 require_auth();
-path_id();
-path_sub_id();
+$id      = path_id();
+$verb_id = path_sub_id();
 
 switch ($_SERVER['REQUEST_METHOD']) {
 
-    case 'DELETE':
-        json_error(
-            'not_implemented',
-            'Unlinking a verb from a subject removes a vector compartment, which requires a DBMS-project function not available to the API yet. See docs/db-requirements.md.',
-            501
-        );
+    case 'DELETE': {
+        $row = db_one("SELECT maludb_subject_verb_unlink(?, ?) AS removed", [$id, $verb_id]);
+        if ((int) $row['removed'] === 0) {
+            json_error('not_found', 'That verb is not linked to the subject.', 404);
+        }
+        json_response(['deleted' => true, 'id' => $id, 'verb_id' => $verb_id]);
+    }
 
     default:
         header('Allow: DELETE');

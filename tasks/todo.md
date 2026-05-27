@@ -102,8 +102,8 @@ Test row removed after verification.
 - **Decision (2026-05-26):** verb-linking is a vector compartment owned by the DBMS project;
   the API can't create it (multi-table view, no grant, needs embedding config). Related-subjects
   is normal data CRUD on an insertable view. The API does DML only, no DDL.
-- [x] `subjects_id_verbs.php` — GET (list linked verbs, works); POST → **501** (deferred). + `tests/subjects_id_verbs_curls.sh`
-- [x] `subjects_id_verbs_id.php` — DELETE → **501** (deferred). + `tests/subjects_id_verbs_id_curls.sh`
+- [x] `subjects_id_verbs.php` — GET (list linked verbs) + **POST** link via `maludb_subject_verb_link` (404/400/422/409/201). ✅ implemented 2026-05-27 (helper added by DBMS project). + `tests/subjects_id_verbs_curls.sh`
+- [x] `subjects_id_verbs_id.php` — **DELETE** unlink via `maludb_subject_verb_unlink` (200/404). ✅ implemented 2026-05-27. + `tests/subjects_id_verbs_id_curls.sh`
 - [x] `subjects_id_related-subjects.php` — GET + POST `{related_subject_id, relationship_type?}` (default `related_to`; 400/422/409). + `tests/subjects_id_related-subjects_curls.sh`
 - [x] `subjects_id_related-subjects_id.php` — DELETE (either direction; 200/404). + `tests/subjects_id_related-subjects_id_curls.sh`
 - [x] Wrote `docs/db-requirements.md` — requests `maludb_subject_verb_link`/`_unlink` (granted) from the DBMS project so the verb-link 501s can be lifted later.
