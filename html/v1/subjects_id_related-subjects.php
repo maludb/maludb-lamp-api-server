@@ -3,10 +3,13 @@
  * /v1/subjects/{id}/related-subjects  (requirements.md §4.1)
  *
  *   GET    List the subjects related to this subject (either endpoint).
- *   POST   Link a related subject. Body: {related_subject_id, relationship_type?}
- *          relationship_type defaults to 'related_to'.
+ *   POST   Link a related subject.
+ *          Body: {related_subject_id, relationship_type?, valid_from?, valid_to?}
+ *          relationship_type defaults to 'related_to'; valid_from/valid_to are optional
+ *          timestamptz temporal-validity bounds.
  *
  * Relationships live in maludb_subject_relationship (insertable single-table view).
+ * Each returned relationship carries valid_from / valid_to.
  */
 
 require_once __DIR__ . '/../../config/response.php';
@@ -25,6 +28,8 @@ function map_related(array $rels, int $id): array {
             'relationship_type'  => $r['relationship_type'],
             'relationship_label' => $r['relationship_label'],
             'direction'          => $outgoing ? 'outgoing' : 'incoming',
+            'valid_from'         => $r['valid_from'],
+            'valid_to'           => $r['valid_to'],
         ];
     }
     return $out;
@@ -40,7 +45,8 @@ switch ($_SERVER['REQUEST_METHOD']) {
         $rels = db_query(
             "SELECT relationship_id, from_subject_id, to_subject_id,
                     from_subject_label, to_subject_label,
-                    relationship_type, label AS relationship_label
+                    relationship_type, label AS relationship_label,
+                    valid_from, valid_to
                FROM maludb_subject_relationship
               WHERE from_subject_id = ? OR to_subject_id = ?
               ORDER BY relationship_id",
@@ -66,6 +72,8 @@ switch ($_SERVER['REQUEST_METHOD']) {
         $rtype = isset($body['relationship_type']) && trim((string) $body['relationship_type']) !== ''
             ? (string) $body['relationship_type']
             : 'related_to';
+        $valid_from = isset($body['valid_from']) && $body['valid_from'] !== '' ? (string) $body['valid_from'] : null;
+        $valid_to   = isset($body['valid_to'])   && $body['valid_to']   !== '' ? (string) $body['valid_to']   : null;
 
         $other = db_one("SELECT canonical_name FROM maludb_subject WHERE subject_id = ?", [$other_id]);
         if ($other === null) {
@@ -82,13 +90,14 @@ switch ($_SERVER['REQUEST_METHOD']) {
             json_error('conflict', 'That related-subject link already exists.', 409);
         }
 
-        db_exec(
+        $created = db_one(
             "INSERT INTO maludb_subject_relationship
                  (relationship_id, from_subject_id, to_subject_id,
-                  from_subject_label, to_subject_label, relationship_type, created_at)
-             SELECT COALESCE(MAX(relationship_id), 0) + 1, ?, ?, ?, ?, ?, now()
-               FROM maludb_subject_relationship",
-            [$id, $other_id, $me['canonical_name'], $other['canonical_name'], $rtype]
+                  from_subject_label, to_subject_label, relationship_type, valid_from, valid_to, created_at)
+             SELECT COALESCE(MAX(relationship_id), 0) + 1, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz, now()
+               FROM maludb_subject_relationship
+             RETURNING valid_from, valid_to",
+            [$id, $other_id, $me['canonical_name'], $other['canonical_name'], $rtype, $valid_from, $valid_to]
         );
 
         json_response([
@@ -98,6 +107,8 @@ switch ($_SERVER['REQUEST_METHOD']) {
                 'relationship_type'  => $rtype,
                 'relationship_label' => null,
                 'direction'          => 'outgoing',
+                'valid_from'         => $created['valid_from'],
+                'valid_to'           => $created['valid_to'],
             ],
         ], 201);
     }

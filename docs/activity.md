@@ -87,6 +87,17 @@ Chronological record of every prompt given on this project and every action take
 
 ---
 
+## 2026-05-27 — related-subjects: add valid_from / valid_to
+
+### Prompt 31
+> Please check the columns for maludb_subject_relationship the api is missing the valid_from and valid_to columns.
+
+**Actions:**
+- Confirmed `maludb_subject_relationship` has `valid_from` / `valid_to` (timestamptz) which the API omitted.
+- Added them to the related-subjects output in both places: `subjects_id.php` (subject-detail `related_subjects[]` embedding) and `subjects_id_related-subjects.php` (`map_related()` + GET SELECT). POST now accepts optional `valid_from`/`valid_to` (cast `::timestamptz`) and echoes them via `RETURNING`.
+- Verified live: create with bounds → echoed; list + subject detail show `valid_from`/`valid_to`; create without → nulls; cleanup. Updated the curl test file, endpoint doc header, and `requirements.md` §4.10.
+- User confirmed the pre-existing `Drajeo(17)→related_to→Edward(9)` row (created 23:11:40) is **their** data (used to identify the missing columns) — left untouched.
+
 ## 2026-05-27 — Remaining db-requirements completed server-side
 
 ### Prompt 30

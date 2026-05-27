@@ -388,7 +388,7 @@ the full related collections are embedded in the single-resource **detail** resp
 
 **Detail embedding** (`GET /v1/subjects/{id}`) returns the subject plus the full arrays inline:
 - `verbs` — the linked verbs (same data as `GET /v1/subjects/{id}/verbs`).
-- `related_subjects` — the related subjects with `relationship_type`/`label` and the other subject's id+label (same data as `GET /v1/subjects/{id}/related-subjects`).
+- `related_subjects` — the related subjects with `relationship_type`/`label`, the other subject's id+label, `direction`, and the relationship's temporal bounds `valid_from`/`valid_to` (same data as `GET /v1/subjects/{id}/related-subjects`). POST accepts optional `valid_from`/`valid_to`.
 The dedicated sub-endpoints remain for backward compatibility with the current desktop client.
 
 Other list endpoints may add similar fields as the client surfaces concrete need. Each addition is recorded here.

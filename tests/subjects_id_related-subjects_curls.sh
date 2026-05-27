@@ -30,16 +30,17 @@ curl -s -X POST 'https://fastapi.maludb.org/v1/subjects/9/related-subjects' \
     -d '{"related_subject_id":999999}'
 
 # --- POST link (self-cleaning: create 9->11, then DELETE it again) -----------
-# 1) link -> 201 {"related_subject":{"id":11,"label":"Zozocal","relationship_type":"related_to",...}}
+# 1) link with optional temporal bounds -> 201
+#    {"related_subject":{"id":11,...,"relationship_type":"depends_on","valid_from":"...","valid_to":"..."}}
 curl -s -X POST 'https://fastapi.maludb.org/v1/subjects/9/related-subjects' \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
     -H 'Content-Type: application/json' -H 'Accept: application/json' \
-    -d '{"related_subject_id":11}'
-# 2) duplicate -> 409 conflict
+    --data-raw '{"related_subject_id":11,"relationship_type":"depends_on","valid_from":"2026-01-01T00:00:00Z","valid_to":"2026-12-31T00:00:00Z"}'
+# 2) duplicate (same target + relationship_type) -> 409 conflict
 curl -s -X POST 'https://fastapi.maludb.org/v1/subjects/9/related-subjects' \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
     -H 'Content-Type: application/json' -H 'Accept: application/json' \
-    -d '{"related_subject_id":11}'
+    --data-raw '{"related_subject_id":11,"relationship_type":"depends_on"}'
 # 3) clean up -> 200
 curl -s -X DELETE 'https://fastapi.maludb.org/v1/subjects/9/related-subjects/11' \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \

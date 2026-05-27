@@ -56,7 +56,9 @@ function load_subject_detail(int $id): ?array {
                 from_subject_label,
                 to_subject_label,
                 relationship_type,
-                label AS relationship_label
+                label AS relationship_label,
+                valid_from,
+                valid_to
            FROM maludb_subject_relationship
           WHERE from_subject_id = ? OR to_subject_id = ?
           ORDER BY relationship_id",
@@ -71,6 +73,8 @@ function load_subject_detail(int $id): ?array {
             'relationship_type'  => $r['relationship_type'],
             'relationship_label' => $r['relationship_label'],
             'direction'          => $outgoing ? 'outgoing' : 'incoming',
+            'valid_from'         => $r['valid_from'],
+            'valid_to'           => $r['valid_to'],
         ];
     }
     $subject['related_subjects'] = $related;
