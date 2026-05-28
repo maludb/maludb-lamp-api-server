@@ -334,3 +334,23 @@ search_path approach, which is fine.)
 - Will commit and push per `CLAUDE.md` #9.
 
 ---
+
+## 2026-05-28 — Phase 10: Document type support (maludb_core 0.81.0)
+
+### Prompt
+> Context: MaluDB extension upgraded to 0.81.0 — document type support. [maludb_document gains a nullable `document_type` column; maludb_upload_document gains an appended `p_document_type`; new writable lookup view `maludb_document_type` (case-insensitive unique label, seeded with 10 types, advisory/no-FK).] Update document endpoints to accept/return document_type and add a new document_types CRUD resource backed by maludb_document_type. Handle the case-insensitive unique violation as a conflict, not a 500. Add tests.
+
+**Check-in (per CLAUDE.md #3) — two decisions confirmed by user:**
+1. Keep the **direct INSERT into the `maludb_document` view** for uploads rather than switching to `maludb_upload_document(...)`: our upload writes binary bytes (PDO::PARAM_LOB → `maludb_source_package.content_bytes`) and the function only accepts *text* content (`p_content_text`/`p_content_jsonb`, no `p_content_bytes`). The view is INSERT/UPDATE-able on the new column, so adding `document_type` to the existing INSERT is the minimal change.
+2. URL slug **`/v1/document-types`** (hyphen), consistent with the existing `subject-types`/`verb-types` lookup endpoints (the prompt wrote `document_types`). No PATCH added to `documents/{id}` — none exists today ("if present").
+
+**Actions:**
+- `html/v1/documents.php` — GET now selects/returns `d.document_type`; POST reads the optional multipart `document_type` field (blank ⇒ NULL) and includes it in the `maludb_document` INSERT and the response.
+- `html/v1/documents_id.php` — GET now selects/returns `d.document_type`.
+- **New** `html/v1/document-types.php` — `GET` (list ordered by `display_order NULLS LAST, document_type`) + `POST` (`{document_type, description?, display_order?}`; 400 missing label, 422 non-integer display_order, **409** on the case-insensitive duplicate — handled by the existing 23505→409 mapping in `config/response.php`, no new code needed).
+- **New** `html/v1/document-types_id.php` — `PATCH` (label/description/display_order; 404/400/422/409) + `DELETE` (200/404; does not touch documents already tagged, no FK); 405 otherwise.
+- Tests: extended `tests/documents_curls.sh` (upload with seeded "Meeting Notes" + brand-new unseeded "Totally Made Up Type", both 201 and round-tripped via GET) and `tests/documents_id_curls.sh` (document_type "Report" round-trip). Added `tests/document-types_curls.sh` and `tests/document-types_id_curls.sh` (full CRUD incl. case-insensitive 409 on both POST and PATCH).
+- `php -l` clean on all four PHP files. Verified the whole suite live against `https://fastapi.maludb.org` with the dev token: 10 seeded types listed; create/PATCH/DELETE lifecycle; 400/422/409/404/405/401 paths; seeded + unseeded uploads round-trip `document_type` in GET. All created rows self-cleaned; DB left clean.
+- Updated `tasks/todo.md` (Phase 10 plan + review) and this log. Commit & push pending (user asked to push everything together at the end).
+
+---

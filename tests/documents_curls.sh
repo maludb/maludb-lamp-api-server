@@ -36,3 +36,43 @@ curl -s -X DELETE "https://fastapi.maludb.org/v1/documents/$DID" \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
     -H 'Accept: application/json'
 rm -f /tmp/maludb_sample.txt
+
+# --- POST upload with a SEEDED document_type ("Meeting Notes") -> 201 ---------
+# Response should echo "document_type":"Meeting Notes".
+printf 'Seeded-type upload.\n' > /tmp/maludb_seeded.txt
+DID=$(curl -s -X POST 'https://fastapi.maludb.org/v1/documents' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -F 'file=@/tmp/maludb_seeded.txt' \
+    -F 'filename=seeded.txt' \
+    -F 'mime_type=text/plain' \
+    -F 'description=seeded type' \
+    -F 'document_type=Meeting Notes' \
+    | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+echo "created document id=$DID (document_type=Meeting Notes)"
+# GET detail -> 200, "document_type":"Meeting Notes" round-trips
+curl -s -X GET "https://fastapi.maludb.org/v1/documents/$DID" \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+curl -s -X DELETE "https://fastapi.maludb.org/v1/documents/$DID" \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+rm -f /tmp/maludb_seeded.txt
+
+# --- POST upload with a BRAND-NEW UNSEEDED document_type -> 201 (must succeed) -
+# Advisory list, no FK: an arbitrary type string is accepted.
+printf 'Unseeded-type upload.\n' > /tmp/maludb_unseeded.txt
+DID=$(curl -s -X POST 'https://fastapi.maludb.org/v1/documents' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -F 'file=@/tmp/maludb_unseeded.txt' \
+    -F 'filename=unseeded.txt' \
+    -F 'mime_type=text/plain' \
+    -F 'document_type=Totally Made Up Type' \
+    | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+echo "created document id=$DID (document_type=Totally Made Up Type)"
+curl -s -X GET "https://fastapi.maludb.org/v1/documents/$DID" \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+curl -s -X DELETE "https://fastapi.maludb.org/v1/documents/$DID" \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+rm -f /tmp/maludb_unseeded.txt

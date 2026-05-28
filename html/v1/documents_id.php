@@ -19,6 +19,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
                     d.title,
                     d.source_type,
                     d.media_type,
+                    d.document_type,
                     d.metadata_jsonb->>'description' AS description,
                     sp.content_size,
                     sp.content_hash,

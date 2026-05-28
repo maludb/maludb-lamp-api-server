@@ -155,3 +155,46 @@ Test row removed after verification.
 - **Body shape defined** (resolves §6 open question): `{title, summary?, kind? (default 'activity'), payload?, occurred_at?, occurred_until?, sensitivity? (default 'internal')}`.
 - [x] `episodes.php` — POST only, via `maludb_core.register_episode(...)` under `SET LOCAL search_path TO public, maludb_core` (tenant-owned `owner_schema='public'`). 400/422/405/401. + `tests/episodes_curls.sh`
 - Verified live (create default + with kind/occurred_at; bad sensitivity → 422); cleaned up test episodes. Nice-to-have public wrapper noted in db-requirements §6.
+
+---
+
+## Phase 10 — Document type support (maludb_core 0.81.0)
+
+**Schema change recap (from user):**
+- `maludb_document` view gains a nullable `document_type text` column (last column; INSERT/UPDATE-able via the view).
+- `maludb_upload_document(...)` gains an appended `p_document_type text DEFAULT NULL` (we don't currently call this function — see decision below).
+- **New view** `maludb_document_type` — picker lookup with columns `document_type_id` (PK, generated), `document_type text` (case-insensitive unique on `lower(document_type)`), `description text?`, `display_order integer?`, `created_at`. Supports SELECT/INSERT/UPDATE/DELETE. Seeded on schema enable.
+- **Advisory only** — no FK from `maludb_document.document_type` to the lookup; uploading an unseeded type string must succeed.
+
+**Decision — keep direct INSERT into `maludb_document`, do NOT switch to `maludb_upload_document(...)`:**
+- Our existing upload (`html/v1/documents.php` POST) writes binary bytes to `maludb_source_package.content_bytes` via PDO::PARAM_LOB, then INSERTs metadata into the `maludb_document` view. The new function only accepts text content (`p_content_text` / `p_content_jsonb`) — there is no `p_content_bytes`, so it can't carry our bytea blob.
+- Per CLAUDE.md #6 (Simplicity Principle), we add `document_type` as one more column on the existing view INSERT — minimal change, view is already declared INSERT/UPDATEable for this column.
+- If a text-content upload path is added later, that one should use `maludb_upload_document(..., p_document_type => ...)`.
+
+**Plan**
+- [x] **`html/v1/documents.php`** — GET selects/returns `d.document_type`; POST reads optional multipart `document_type` (blank ⇒ NULL), appended to the existing view INSERT and echoed back.
+- [x] **`html/v1/documents_id.php`** — GET selects/returns `d.document_type`. (No PATCH/PUT today → nothing to extend; spec said "if present".)
+- [x] **`html/v1/document-types.php`** (new) — `/v1/document-types` (hyphenated). GET (ordered `display_order NULLS LAST, document_type`) + POST (400 missing label / 422 non-int display_order / 409 case-insensitive dupe via global 23505→409 mapping).
+- [x] **`html/v1/document-types_id.php`** (new) — `/v1/document-types/{id}`. PATCH (404/400/422/409) + DELETE (200/404; no FK so tagged documents are untouched); 405 otherwise.
+- [x] **Tests** — extended `tests/documents_curls.sh` (seeded + unseeded upload, round-trip) and `tests/documents_id_curls.sh` (round-trip); new `tests/document-types_curls.sh` and `tests/document-types_id_curls.sh` (full CRUD incl. case-insensitive 409 on POST and PATCH).
+- [x] **`php -l` clean** on all four files; full suite verified live against `https://fastapi.maludb.org`; all created rows self-cleaned.
+- [x] **Docs** — Phase 10 entry appended to `docs/activity.md`; this review block filled in.
+- [ ] **Commit and push** — bundled with the prior 7 unpushed commits (user asked to push everything together at the end).
+
+## Review (Phase 10)
+
+**Files changed**
+- `html/v1/documents.php` — `document_type` on GET list + POST (read from multipart, NULL when blank, advisory free text).
+- `html/v1/documents_id.php` — `document_type` on GET detail.
+
+**Files added**
+- `html/v1/document-types.php` — GET (picker list) + POST (create), 405 otherwise.
+- `html/v1/document-types_id.php` — PATCH + DELETE, 405 otherwise.
+- `tests/document-types_curls.sh`, `tests/document-types_id_curls.sh`.
+
+**Verified live** (dev token, real host): 10 seeded types listed in `display_order`; create→PATCH→DELETE lifecycle; case-insensitive duplicate → **409** on both POST (`"report"` vs seeded `Report`) and PATCH (`"EMAIL"`); 400 missing label · 422 non-integer `display_order` · 404 missing · 405 wrong method · 401 no token. Upload with seeded **"Meeting Notes"** and brand-new unseeded **"Totally Made Up Type"** both 201 and round-trip in GET detail. DB left clean (every created row deleted).
+
+**Notes**
+- No new server code for the 409: the case-insensitive unique violation (`malu$document_type_owner_lower_idx`, SQLSTATE 23505) is already mapped to 409 by `config/response.php`'s global handler.
+- Kept the direct `maludb_document` view INSERT (not `maludb_upload_document(...)`) — that function is text-content only and can't carry our bytea blob. A future text-content upload path should call it with `p_document_type => …`.
+- PATCH-only on `document-types/{id}` (no PUT), matching the existing `*_id.php` convention (subjects/skills/projects).

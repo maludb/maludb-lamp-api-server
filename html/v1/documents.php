@@ -31,6 +31,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
                        d.title,
                        d.source_type,
                        d.media_type,
+                       d.document_type,
                        d.metadata_jsonb->>'description' AS description,
                        sp.content_size,
                        d.created_at
@@ -74,6 +75,10 @@ switch ($_SERVER['REQUEST_METHOD']) {
         $filename    = trim((string) ($_POST['filename'] ?? $_FILES['file']['name'] ?? 'upload'));
         $mime        = trim((string) ($_POST['mime_type'] ?? $_FILES['file']['type'] ?? '')) ?: 'application/octet-stream';
         $description = isset($_POST['description']) ? (string) $_POST['description'] : null;
+        // document_type (0.81.0): optional free-text picker label; advisory, no FK — any
+        // string is allowed, omit/blank means NULL. Stored on the maludb_document view.
+        $document_type = (isset($_POST['document_type']) && trim((string) $_POST['document_type']) !== '')
+            ? (string) $_POST['document_type'] : null;
         $size        = strlen($bytes);
         $hash        = hash('sha256', $bytes);
 
@@ -95,10 +100,10 @@ switch ($_SERVER['REQUEST_METHOD']) {
 
         $doc = db_one(
             "INSERT INTO maludb_document
-                 (source_package_id, title, source_type, media_type, metadata_jsonb, created_at)
-             VALUES (?, ?, 'document', ?, ?, now())
-             RETURNING document_id AS id, title, source_type, media_type, created_at",
-            [$spid, $filename, $mime, json_encode(['description' => $description, 'filename' => $filename])]
+                 (source_package_id, title, source_type, media_type, document_type, metadata_jsonb, created_at)
+             VALUES (?, ?, 'document', ?, ?, ?, now())
+             RETURNING document_id AS id, title, source_type, media_type, document_type, created_at",
+            [$spid, $filename, $mime, $document_type, json_encode(['description' => $description, 'filename' => $filename])]
         );
         $doc['id']           = (int) $doc['id'];
         $doc['description']  = $description;
