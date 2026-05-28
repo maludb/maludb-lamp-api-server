@@ -269,7 +269,7 @@ function handle_uncaught(Throwable $e): void {
             case '23505':                       // unique_violation
                 $status = 409; $code = 'conflict';          $message = pg_error_message($e); break;
             case '23502': case '23503': case '23514': // not_null / fk / check
-            case '22023': case '22P02': case 'P0001': // invalid value / bad cast / trigger RAISE
+            case '22000': case '22023': case '22P02': case 'P0001': // data exception / invalid value / bad cast / trigger RAISE
                 $status = 422; $code = 'validation_failed'; $message = pg_error_message($e); break;
         }
     }

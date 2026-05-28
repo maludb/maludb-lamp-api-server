@@ -23,6 +23,7 @@ function map_related(array $rels, int $id): array {
     foreach ($rels as $r) {
         $outgoing = ((int) $r['from_subject_id'] === $id);
         $out[] = [
+            'relationship_id'    => (int) $r['relationship_id'],
             'id'                 => (int) ($outgoing ? $r['to_subject_id']   : $r['from_subject_id']),
             'label'              =>        $outgoing ? $r['to_subject_label'] : $r['from_subject_label'],
             'relationship_type'  => $r['relationship_type'],
@@ -96,12 +97,13 @@ switch ($_SERVER['REQUEST_METHOD']) {
                   from_subject_label, to_subject_label, relationship_type, valid_from, valid_to, created_at)
              SELECT COALESCE(MAX(relationship_id), 0) + 1, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz, now()
                FROM maludb_subject_relationship
-             RETURNING valid_from, valid_to",
+             RETURNING relationship_id, valid_from, valid_to",
             [$id, $other_id, $me['canonical_name'], $other['canonical_name'], $rtype, $valid_from, $valid_to]
         );
 
         json_response([
             'related_subject' => [
+                'relationship_id'    => (int) $created['relationship_id'],
                 'id'                 => $other_id,
                 'label'              => $other['canonical_name'],
                 'relationship_type'  => $rtype,

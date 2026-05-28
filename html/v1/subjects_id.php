@@ -68,6 +68,7 @@ function load_subject_detail(int $id): ?array {
     foreach ($rels as $r) {
         $outgoing = ((int) $r['from_subject_id'] === $id);
         $related[] = [
+            'relationship_id'    => (int) $r['relationship_id'],
             'id'                 => (int) ($outgoing ? $r['to_subject_id']    : $r['from_subject_id']),
             'label'              =>        $outgoing ? $r['to_subject_label']  : $r['from_subject_label'],
             'relationship_type'  => $r['relationship_type'],

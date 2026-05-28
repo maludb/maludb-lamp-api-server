@@ -301,7 +301,8 @@ against the real schema; the public JSON contract is preserved by aliasing in SQ
 | `/v1/subjects/{id}/verbs` | `subjects_id_verbs.php` | GET, POST | POST body: `{verb_id}` |
 | `/v1/subjects/{id}/verbs/{verbId}` | `subjects_id_verbs_id.php` | DELETE | Unlink the verb from the subject. |
 | `/v1/subjects/{id}/related-subjects` | `subjects_id_related-subjects.php` | GET, POST | POST body: `{related_subject_id}` |
-| `/v1/subjects/{id}/related-subjects/{otherId}` | `subjects_id_related-subjects_id.php` | DELETE | Unlink. |
+| `/v1/subjects/{id}/related-subjects/{otherId}` | `subjects_id_related-subjects_id.php` | DELETE | Unlink (pair-level: removes any relationship between the two subjects). |
+| `/v1/subject-relationships/{relationship_id}` | `subject-relationships_id.php` | GET, PATCH, DELETE | Row-level access to a single relationship. PATCH body: `{relationship_type?, label?, valid_from?, valid_to?}` (null clears `valid_*`; DB enforces time-order → 422). Companion to the pair-DELETE above; `relationship_id` is surfaced on POST/GET responses and the subject detail embedding. |
 
 ### 4.2 Verbs
 

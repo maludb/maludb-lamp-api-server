@@ -87,6 +87,18 @@ Chronological record of every prompt given on this project and every action take
 
 ---
 
+## 2026-05-28 — Row-level relationship endpoint (GET/PATCH/DELETE by id)
+
+### Prompt 32
+> We need endpoints to delete and update the subject to subject relationship. [DB notes: view supports SELECT/INSERT/UPDATE/DELETE; relationship_type free-text; time-order CHECK]
+
+**Actions:**
+- Added new endpoint `subject-relationships_id.php` — GET/PATCH/DELETE at `/v1/subject-relationships/{relationship_id}`, operating directly on the writable `maludb_subject_relationship` view. PATCH accepts `{relationship_type?, label?, valid_from?, valid_to?}` (null clears `valid_*`); 400 no-fields; 404 missing; 405 otherwise.
+- Surfaced `relationship_id` in existing related-subjects responses (POST, GET list, and the subject-detail `related_subjects[]` embedding) so clients can reference the new endpoint.
+- **Foundation fix uncovered:** the time-order constraint on `valid_from`/`valid_to` raises **SQLSTATE 22000** (the underlying `tstzrange(from,to)` rejects inverted bounds), which my global error handler didn't map → it was returning 500. Added `22000` to the `422 validation_failed` mapping in `config/response.php`.
+- Discovered (contrary to the DB note) `maludb_subject_relationship.relationship_type` is **not** FK-constrained on this table — accepts free-text (the FK note was about the object-graph `maludb_svpor_relationship` table). The endpoint reflects this; no client-side type validation.
+- Verified live: full lifecycle (create→GET→PATCH→422 time-order→PATCH-clear-bounds→DELETE→404), DB left clean (only your `relationship_id=1` "project manager" row remains). Updated `requirements.md` §4.1, added curl test file, logged in `db-requirements.md`/activity. Committed.
+
 ## 2026-05-27 — related-subjects: add valid_from / valid_to
 
 ### Prompt 31
