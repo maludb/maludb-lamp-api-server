@@ -110,6 +110,165 @@ function db_one(string $sql, array $params = []): ?array {
     return $row === false ? null : $row;
 }
 
+/**
+ * Run $fn inside a transaction with the search_path the maludb_core facade needs.
+ *
+ * The maludb_* facade views/functions (episodes, svpor statements, the *_type pickers)
+ * and the maludb_core.* resolvers reference their malu$* base tables + RLS grant tables
+ * unqualified, so they only resolve when `maludb_core` is on the search_path. `public`
+ * stays first so current_schema() = the tenant schema (owner_schema resolution / RLS).
+ * SET LOCAL keeps the change scoped to the transaction.
+ *
+ * The callback receives the shared PDO handle; db_query/db_one/db_exec use that same
+ * connection, so they participate in the transaction and the search_path. On any throw we
+ * roll back and rethrow (the global handler maps DB SQLSTATEs → 409/422/500).
+ */
+function db_tx_core(callable $fn) {
+    $pdo = Database::getInstance()->getConnection();
+    $pdo->beginTransaction();
+    $pdo->exec("SET LOCAL search_path TO public, maludb_core");
+    try {
+        $result = $fn($pdo);
+        $pdo->commit();
+        return $result;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * SVO statement helpers (maludb_core 0.82.0) — shared by statements.php and
+ * episodes_id_statements.php. A statement is
+ *   (subject_kind, subject_id) --verb_id--> (object_kind, object_id).
+ * Created via the idempotent maludb_svpor_statement_create(...) facade; both
+ * endpoints call svpor_create_statement() inside db_tx_core() (the verb/subject/
+ * predicate resolvers and the facade need maludb_core on the search_path).
+ * ------------------------------------------------------------------------- */
+
+/** Read-side column list for a maludb_svpor_statement row. */
+function svpor_statement_cols(): string {
+    return "statement_id AS id, subject_kind, subject_id, verb_id, object_kind, object_id,
+            predicate_id, valid_from, valid_to, confidence, provenance, source_package_id,
+            metadata_jsonb AS metadata, created_at";
+}
+
+/** Normalize scalar types on a statement row in place. */
+function shape_statement(array &$r): void {
+    foreach (['id','subject_id','verb_id','object_id','predicate_id','source_package_id'] as $k) {
+        $r[$k] = $r[$k] === null ? null : (int) $r[$k];
+    }
+    $r['confidence'] = $r['confidence'] === null ? null : (float) $r['confidence'];
+    // Decode as an object (not assoc) so empty metadata stays {} rather than [].
+    $r['metadata']   = $r['metadata']   === null ? null : json_decode($r['metadata']);
+}
+
+/**
+ * Create a statement from a request body and return the created (shaped) row.
+ *
+ * MUST run inside db_tx_core(). Recognized $body keys:
+ *   verb | verb_id, subject_kind (default 'subject'), subject_id | subject (name,
+ *   only when kind='subject' → create-or-resolve a person), object_kind, object_id,
+ *   predicate | predicate_id, valid_from, valid_to, confidence, provenance
+ *   (default 'provided'), source_package_id, metadata (object).
+ * $force_object = ['kind'=>…, 'id'=>…] overrides object_kind/object_id (episode-scoped route).
+ *
+ * All shape/required-field checks (json_error 400/422) run before any DB write, so a
+ * rejected request never leaves a half-resolved person behind.
+ */
+function svpor_create_statement(array $body, ?array $force_object = null): array {
+    // ---- phase 1: parse + shape-validate (no DB writes) ----
+    $verb_id = null; $verb_name = null;
+    if (isset($body['verb_id'])) {
+        if (!is_int($body['verb_id'])) json_error('validation_failed', '"verb_id" must be an integer.', 422);
+        $verb_id = (int) $body['verb_id'];
+    } elseif (isset($body['verb']) && trim((string) $body['verb']) !== '') {
+        $verb_name = (string) $body['verb'];
+    } else {
+        json_error('missing_field', 'Provide "verb" (name) or "verb_id".', 400);
+    }
+
+    $subject_kind = isset($body['subject_kind']) && trim((string) $body['subject_kind']) !== ''
+        ? (string) $body['subject_kind'] : 'subject';
+    $subject_id = null; $subject_name = null;
+    if (isset($body['subject_id'])) {
+        if (!is_int($body['subject_id'])) json_error('validation_failed', '"subject_id" must be an integer.', 422);
+        $subject_id = (int) $body['subject_id'];
+    } elseif ($subject_kind === 'subject' && isset($body['subject']) && trim((string) $body['subject']) !== '') {
+        $subject_name = (string) $body['subject'];
+    } else {
+        json_error('missing_field', 'Provide "subject_id", or "subject" (name) when subject_kind is "subject".', 400);
+    }
+
+    if ($force_object !== null) {
+        $object_kind = (string) $force_object['kind'];
+        $object_id   = (int) $force_object['id'];
+    } else {
+        $object_kind = isset($body['object_kind']) ? trim((string) $body['object_kind']) : '';
+        if ($object_kind === '') json_error('missing_field', 'Field "object_kind" is required.', 400);
+        if (!isset($body['object_id']) || !is_int($body['object_id'])) json_error('validation_failed', '"object_id" must be an integer.', 422);
+        $object_id = (int) $body['object_id'];
+    }
+
+    $predicate_id = null; $predicate_name = null;
+    if (isset($body['predicate_id'])) {
+        if (!is_int($body['predicate_id'])) json_error('validation_failed', '"predicate_id" must be an integer.', 422);
+        $predicate_id = (int) $body['predicate_id'];
+    } elseif (isset($body['predicate']) && trim((string) $body['predicate']) !== '') {
+        $predicate_name = (string) $body['predicate'];
+    }
+    if (array_key_exists('confidence', $body) && $body['confidence'] !== null && !is_numeric($body['confidence'])) {
+        json_error('validation_failed', '"confidence" must be a number.', 422);
+    }
+
+    $valid_from = isset($body['valid_from']) ? (string) $body['valid_from'] : null;
+    $valid_to   = isset($body['valid_to'])   ? (string) $body['valid_to']   : null;
+    $confidence = (array_key_exists('confidence', $body) && $body['confidence'] !== null) ? (string) $body['confidence'] : null;
+    $provenance = isset($body['provenance']) && trim((string) $body['provenance']) !== '' ? (string) $body['provenance'] : 'provided';
+    $source_pkg = isset($body['source_package_id']) && $body['source_package_id'] !== null ? (int) $body['source_package_id'] : null;
+    $metadata   = isset($body['metadata']) && is_array($body['metadata']) ? json_encode($body['metadata']) : '{}';
+
+    // ---- phase 2: resolve names (SELECTs), then upsert the subject, then create ----
+    if ($verb_id === null) {
+        $verb_id = db_one("SELECT maludb_core.resolve_svpor_verb(?) AS id", [$verb_name])['id'] ?? null;
+        if ($verb_id === null) json_error('validation_failed', 'Unknown verb "' . $verb_name . '".', 422);
+        $verb_id = (int) $verb_id;
+    }
+    if ($predicate_name !== null) {
+        $predicate_id = db_one("SELECT maludb_core.resolve_svpor_predicate(?) AS id", [$predicate_name])['id'] ?? null;
+        if ($predicate_id === null) json_error('validation_failed', 'Unknown predicate "' . $predicate_name . '".', 422);
+        $predicate_id = (int) $predicate_id;
+    }
+    if ($subject_id === null) {
+        $subject_id = (int) db_one(
+            "SELECT register_svpor_subject(p_canonical_name => ?, p_subject_type => 'person') AS id",
+            [$subject_name]
+        )['id'];
+    }
+
+    $row = db_one(
+        "SELECT maludb_svpor_statement_create(
+                    p_subject_kind      => ?, p_subject_id => ?,
+                    p_verb_id           => ?,
+                    p_object_kind       => ?, p_object_id  => ?,
+                    p_predicate_id      => ?,
+                    p_valid_from        => ?::timestamptz, p_valid_to => ?::timestamptz,
+                    p_confidence        => ?::numeric,
+                    p_provenance        => ?,
+                    p_source_package_id => ?,
+                    p_metadata_jsonb    => ?::jsonb
+                ) AS id",
+        [$subject_kind, $subject_id, $verb_id, $object_kind, $object_id, $predicate_id,
+         $valid_from, $valid_to, $confidence, $provenance, $source_pkg, $metadata]
+    );
+
+    $stmt = db_one("SELECT " . svpor_statement_cols() . " FROM maludb_svpor_statement WHERE statement_id = ?", [(int) $row['id']]);
+    shape_statement($stmt);
+    return $stmt;
+}
+
 /* ---------------------------------------------------------------------------
  * Responses (requirements.md §1.5, §2.2, §2.3)
  * ------------------------------------------------------------------------- */

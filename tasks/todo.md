@@ -198,3 +198,129 @@ Test row removed after verification.
 - No new server code for the 409: the case-insensitive unique violation (`malu$document_type_owner_lower_idx`, SQLSTATE 23505) is already mapped to 409 by `config/response.php`'s global handler.
 - Kept the direct `maludb_document` view INSERT (not `maludb_upload_document(...)`) — that function is text-content only and can't carry our bytea blob. A future text-content upload path should call it with `p_document_type => …`.
 - PATCH-only on `document-types/{id}` (no PUT), matching the existing `*_id.php` convention (subjects/skills/projects).
+
+---
+
+## Phase 11 — Episodes/events + SVO statements (maludb_core 0.82.0)
+
+**Verified live (DB introspection, txn rolled back; one leaked probe episode deleted):**
+- Facade lives in `public`; all of `maludb_episode` (view), `maludb_register_episode`,
+  `maludb_episode_get`, `maludb_episode_type`, `maludb_svpor_statement` (view),
+  `maludb_svpor_statement_create/_close/_delete/_set_provenance` need
+  `SET LOCAL search_path TO public, maludb_core` (current_schema stays `public` for tenant
+  ownership; `maludb_core` in path resolves `malu$*` base tables + RLS grant checks). Same
+  pattern as the existing `episodes.php`.
+- `maludb_core.resolve_svpor_verb('attended'|'generated_by'|'made_during')` → 6/7/8 (seeded).
+- `maludb_svpor_statement_create(...)` is idempotent on
+  (subject_kind,subject_id,verb_id,object_kind,object_id) — repeat returns same id.
+- Bad endpoint id → SQLSTATE 23503 (→422 via global handler); bad kind → 22023 (→422).
+- `maludb_episode_get(id)` → `{episode, statements[], details[]}` with `*_label`s resolved;
+  NULL when the id doesn't exist.
+
+**Conventions reused:** bearer auth, `db_query/db_one/db_exec`, `json_response/json_error`,
+`path_id`, global SQLSTATE→HTTP mapping (23505→409, 23503/22023/...→422), hyphenated slugs
+for picker resources, one file per URL path, self-cleaning curl test per endpoint.
+
+**Endpoints to build**
+1. `episodes.php` (rewrite POST onto the new facade + add GET list)
+   - GET `?q=&kind=&provenance=&limit=` — list from `maludb_episode`, ORDER BY
+     `occurred_at DESC NULLS LAST, episode_id DESC`. Returns the row columns + `provenance`.
+   - POST — `maludb_register_episode(p_episode_kind=>, p_title=>, p_summary=>, p_payload_jsonb=>,
+     p_occurred_at=>, p_occurred_until=>, p_sensitivity=>, p_provenance=>)` (named args).
+     Body `{title (req), kind? (default 'activity'), summary?, payload?, occurred_at?,
+     occurred_until?, sensitivity? (default 'internal'), provenance? (default 'provided')}`.
+     Read back via `maludb_episode` in the same txn.
+2. `episodes_id.php` (new)
+   - GET — `maludb_episode_get(id)`; 404 if NULL. Returns `{episode, statements, details}`.
+   - PATCH — `UPDATE maludb_episode SET …` for any of
+     {title, summary, kind→episode_kind, payload→payload_jsonb, occurred_at, occurred_until,
+      sensitivity, provenance, lifecycle_state}; 400 no-fields, 404 missing; returns episode_get.
+   - DELETE — `DELETE FROM maludb_episode WHERE episode_id=?`; 200/404.
+3. `episode-types.php` + `episode-types_id.php` (new) — picker CRUD on `maludb_episode_type`,
+   mirroring `document-types.php`/`document-types_id.php` (case-insensitive dup → 409).
+4. `statements.php` (new) — general statement surface
+   - GET `?provenance=&object_kind=&object_id=&subject_kind=&subject_id=&limit=` — list from
+     `maludb_svpor_statement` (this is the "list suggested items" review query:
+     `?provenance=suggested`). Joins not needed (labels available via episode_get); returns raw
+     columns.
+   - POST — create a statement (see body shape + resolution below).
+5. `statements_id.php` (new)
+   - GET — single statement row; 404.
+   - PATCH — `{provenance?}` → `maludb_svpor_statement_set_provenance` (accept/reject transition);
+     `{valid_to?}` (or `{close:true}`) → `maludb_svpor_statement_close`. 400 no-op, 404.
+   - DELETE — `maludb_svpor_statement_delete`; 200/404.
+6. `episodes_id_statements.php` (new) — episode-scoped convenience
+   - GET — statements where `object_kind='episode_object' AND object_id={id}` (the event's
+     attendees/documents/decisions); 404 if the episode doesn't exist.
+   - POST — same as statements POST but `object_kind`/`object_id` default to this episode.
+
+**Statement POST body (shared by #4 and #6):**
+`{ verb (name) | verb_id, subject_kind (default 'subject'), subject_id | subject (name, only
+when kind='subject'), object_kind, object_id, predicate? | predicate_id?, valid_from?,
+valid_to?, confidence?, provenance? (default 'provided'), source_package_id?, metadata? }`
+- `verb`: resolve via `maludb_core.resolve_svpor_verb` (422 if unknown) unless `verb_id` given.
+- `subject` (name) with kind='subject': create-or-resolve via `register_svpor_subject` — this is
+  what lets you add "Edward Honour attended" by name (see DECISION 1).
+- Calls `maludb_svpor_statement_create(...)` with named args; idempotent. Returns the row.
+- *_kind ∈ ('subject','verb','document','episode_object','memory','source_package','claim',
+  'fact','memory_detail_object'); validated by the DB (bad kind → 422).
+
+**Tests (one curl file per endpoint, dev token, self-cleaning):**
+`episodes_curls.sh` (rewrite: GET list now 200 not 405; POST provided + suggested),
+`episodes_id_curls.sh`, `episode-types_curls.sh`, `episode-types_id_curls.sh`,
+`statements_curls.sh`, `statements_id_curls.sh`, `episodes_id_statements_curls.sh`.
+Cover: create event (provided + suggested), link attendee/document/decision, idempotent
+re-link returns same id, FK-violation on bad id → 422, `maludb_episode_get` shape,
+episode-type CRUD + duplicate 409, suggested→accepted transition (PATCH provenance) on both a
+statement and an episode. Self-clean via DELETE (episodes + statements + types are all deletable).
+
+**Open decisions (check in before building):**
+- DECISION 1 — name resolution in statement POST (verb-by-name + create-or-resolve
+  subject-by-name) vs strictly id-based.
+- DECISION 2 — statement routing surface (general `/statements` + `/statements/{id}` AND
+  episode-scoped `/episodes/{id}/statements`) vs a single style.
+- DECISION 3 — boilerplate: small shared helper in `config/response.php` for the
+  `SET LOCAL search_path TO public, maludb_core` + txn, or keep each endpoint self-contained.
+
+### Review (Phase 11)
+
+**Decisions (confirmed by user):** statement input = verb **+ subject by name** (create-or-resolve);
+routing = **both** general `/statements` + `/statements/{id}` and episode-scoped
+`/episodes/{id}/statements`; boilerplate = **shared helper** in `config/response.php`.
+
+**Files added**
+- `config/response.php` — `db_tx_core(callable)` (txn + `SET LOCAL search_path TO public, maludb_core`);
+  `svpor_statement_cols()`, `shape_statement()`, `svpor_create_statement()` (verb/subject/predicate
+  name resolution, shape-validate before any write, idempotent create).
+- `html/v1/episodes.php` — **rewritten**: GET list (`q`/`kind`/`provenance`/`limit`, by occurred_at)
+  + POST via `maludb_register_episode(... p_provenance =>)`.
+- `html/v1/episodes_id.php` — GET (`maludb_episode_get` envelope), PATCH (UPDATE the view incl.
+  provenance/lifecycle_state — the accept/reject transition), DELETE.
+- `html/v1/episode-types.php` / `episode-types_id.php` — picker CRUD (case-insensitive dup → 409).
+- `html/v1/statements.php` — GET filter (review queue = `?provenance=suggested`) + POST general create.
+- `html/v1/statements_id.php` — GET, PATCH (set-provenance and/or close via `valid_to`/`close:true`), DELETE.
+- `html/v1/episodes_id_statements.php` — event-scoped GET (links where object = this episode) + POST
+  (object defaults to the episode).
+- 7 curl test files (one per endpoint).
+
+**Verified live** (dev token, real host; DB left clean — 0 episodes / 0 statements):
+- Create episode provided + suggested; list + `?provenance=suggested` review queue.
+- `maludb_episode_get` shape `{episode, statements[], details[]}` with `*_label`s resolved.
+- Full meeting model linked: attendee (subject by name), document (`generated_by`), decision
+  (`memory`/`made_during`) — all three surface in episode_get with labels.
+- Idempotent re-link returns the same statement id; FK violation on bad id → 422; unknown verb → 422.
+- Episode-type CRUD incl. case-insensitive duplicate → 409 (POST and PATCH).
+- suggested → accepted provenance transition on both an episode (PATCH) and a statement (PATCH);
+  statement close sets `valid_to`.
+- 400/404/405/401 paths across all endpoints.
+
+**Notes**
+- Everything episode/statement-related runs inside `db_tx_core()` — the facade views/functions and
+  the `maludb_core.*` resolvers reference `malu$*` base tables + RLS grants unqualified, so they only
+  resolve with `maludb_core` on the search_path (current_schema stays `public` for tenant ownership).
+  The `*_type` picker views resolve on the default path, so those endpoints stay plain (like document-types).
+- `payload_jsonb`/`metadata` are decoded as objects (not assoc) so an empty value stays `{}`, not `[]`.
+- Linking "by name" upserts a `malu$svpor_subject`; there is no public API to delete those, so the
+  test files reuse one fixed name ("Regression Attendee") to bound residue to a single row.
+- FK violations (23503) and bad kinds (22023) map to 422; case-insensitive label dup (23505) → 409 —
+  all via the existing global handler, no new mapping code.

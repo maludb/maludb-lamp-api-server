@@ -354,3 +354,45 @@ search_path approach, which is fine.)
 - Updated `tasks/todo.md` (Phase 10 plan + review) and this log. Commit & push pending (user asked to push everything together at the end).
 
 ---
+
+## 2026-05-29 — Phase 11: Episodes/events + SVO statements (maludb_core 0.82.0)
+
+### Prompt
+> Context: MaluDB extension upgraded to 0.82.0 — episodes/events + subject-verb-object statements.
+> [maludb_episode writable view + maludb_register_episode (new p_provenance) + maludb_episode_get
+> aggregate + maludb_episode_type picker; maludb_svpor_statement writable view + idempotent
+> maludb_svpor_statement_create/_close/_delete/_set_provenance; maludb_core.resolve_/register_svpor_*
+> resolvers.] Build episodes (GET/GET{id}/POST/PATCH/DELETE), episode-types CRUD, statements
+> (create/list/close/delete/set-provenance, both episode-scoped and general), and a
+> suggested→accepted review transition. Add tests.
+
+**Check-in (per CLAUDE.md #3):** wrote the Phase 11 plan to `tasks/todo.md`, then confirmed three
+decisions with the user — (1) statement input accepts verb + subject **by name** (create-or-resolve),
+(2) build **both** general `/statements`(+`/{id}`) and episode-scoped `/episodes/{id}/statements`,
+(3) factor the txn+search_path boilerplate into a **shared helper**.
+
+**Discovery (live DB introspection, txn rolled back):** all 0.82.0 objects present; the facade
+views/functions and `maludb_core.*` resolvers reference `malu$*` base tables + RLS grant tables
+unqualified, so they require `SET LOCAL search_path TO public, maludb_core` (current_schema stays
+`public`). Seeded verbs attended/generated_by/made_during resolve to 6/7/8. `maludb_svpor_statement_create`
+is idempotent; bad endpoint id → 23503; `maludb_episode_get` → `{episode, statements[], details[]}`
+with labels, NULL when missing. (One probe episode leaked via autocommit and was deleted.)
+
+**Actions:**
+- `config/response.php` — added `db_tx_core()` and the SVO statement helpers
+  (`svpor_create_statement` with verb/subject/predicate name resolution + shape-validate-before-write,
+  `svpor_statement_cols`, `shape_statement`).
+- Rewrote `episodes.php` onto the facade (GET list + POST with provenance); added `episodes_id.php`
+  (GET via episode_get, PATCH incl. provenance/lifecycle_state, DELETE), `episode-types.php` +
+  `episode-types_id.php` (picker CRUD), `statements.php` + `statements_id.php` (general create/list +
+  row-level GET/PATCH-provenance-or-close/DELETE), and `episodes_id_statements.php` (event-scoped).
+- Wrote 7 curl test files. `php -l` clean on all 8 PHP files. Verified the whole suite live against
+  `https://fastapi.maludb.org`: provided+suggested episodes, full meeting model (attendee/document/decision
+  links with resolved labels), idempotent re-link, FK→422, unknown-verb→422, episode-type dup→409,
+  suggested→accepted on both episode and statement, close/valid_to. DB left clean (0 episodes / 0
+  statements; one reusable "Regression Attendee" svpor subject persists by design — no API to delete it).
+- Fixed an empty-jsonb fidelity issue (`{}` was serializing as `[]`) by decoding payload/metadata as objects.
+- Updated `tasks/todo.md` (Phase 11 plan + review) and `requirements.md`. Commit/push pending with the
+  earlier unpushed commits.
+
+---

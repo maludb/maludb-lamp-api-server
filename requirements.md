@@ -368,13 +368,40 @@ against the real schema; the public JSON contract is preserved by aliasing in SQ
 | `/v1/skills/{id}` | `skills_id.php` | GET, PATCH, DELETE | |
 | `/v1/skills/{id}/duplicate` | `skills_id_duplicate.php` | POST | Returns the new skill object (`201`). |
 
-### 4.9 Episodes (activity)
+### 4.9 Episodes (events) + SVO statements — maludb_core 0.82.0
 
-Per the client's own contract note (`api-calls.md`), only `POST /v1/episodes` is in the published v1 contract. Episode list / get / patch / close / reopen / delete are unverified client conventions and are **not** included in v1. `/v1/episodes/{id}/replay` is deferred.
+0.82.0 made episodes first-class (writable `maludb_episode` view + `maludb_register_episode` create
++ `maludb_episode_get` aggregate) and added a normalized subject-verb-object statement layer
+(`maludb_svpor_statement`) that links people/documents/decisions to an event. The earlier
+"POST-only, append-only" episode note (`api-calls.md`) is superseded.
+
+**Search path:** the episode/statement facade views/functions and the `maludb_core.*` resolvers
+reference their `malu$*` base tables + RLS grant tables unqualified, so every episode/statement
+endpoint runs inside `db_tx_core()` — a txn with `SET LOCAL search_path TO public, maludb_core`
+(`public` first → `owner_schema='public'` tenant ownership / RLS; `maludb_core` in path → base
+tables resolve). The `*_type` picker views resolve on the default path, so those endpoints stay plain.
 
 | URL | File | Methods | Notes |
 |---|---|---|---|
-| `/v1/episodes` | `episodes.php` | POST | Body shape follows the existing `createRemoteEpisode` contract in `src/main/api/episodes.ts` (client). Pinning the exact JSON shape is open (§6). |
+| `/v1/episodes` | `episodes.php` | GET, POST | GET lists `maludb_episode` (`q`/`kind`/`provenance`/`limit`, by `occurred_at`). POST → `maludb_register_episode(... p_provenance =>)`. Body `{title(req), kind?(='activity'), summary?, payload?, occurred_at?, occurred_until?, sensitivity?(='internal'), provenance?(='provided')}`. |
+| `/v1/episodes/{id}` | `episodes_id.php` | GET, PATCH, DELETE | GET → `maludb_episode_get` `{episode, statements[], details[]}` (labels resolved). PATCH UPDATEs the view (title/summary/kind/payload/occurred_at/occurred_until/sensitivity/**provenance**/lifecycle_state — provenance is the accept/reject transition). DELETE removes it. |
+| `/v1/episodes/{id}/statements` | `episodes_id_statements.php` | GET, POST | Event-scoped links. GET = statements where `object_kind='episode_object' AND object_id={id}`. POST = create with object defaulted to this episode. `404` if the episode is missing. |
+| `/v1/statements` | `statements.php` | GET, POST | GET filters `maludb_svpor_statement` (`provenance`/`object_*`/`subject_*`/`verb_id`/`limit`); the review queue is `?provenance=suggested`. POST = general create. |
+| `/v1/statements/{id}` | `statements_id.php` | GET, PATCH, DELETE | PATCH `{provenance?}` → `maludb_svpor_statement_set_provenance`; `{valid_to?}`/`{close:true}` → `maludb_svpor_statement_close`. DELETE → `maludb_svpor_statement_delete`. |
+| `/v1/episode-types` | `episode-types.php` | GET, POST | Advisory event-kind picker on `maludb_episode_type` (case-insensitive unique label → 409). |
+| `/v1/episode-types/{id}` | `episode-types_id.php` | PATCH, DELETE | Update/remove a picker entry; deleting does not affect episodes already tagged (no FK). |
+
+**Statement create body** (shared by the general + episode-scoped POST): a statement is
+`(subject_kind, subject_id) --verb_id--> (object_kind, object_id)`, created via the idempotent
+`maludb_svpor_statement_create(...)`. The endpoint resolves names so callers needn't pre-fetch ids:
+`verb` (name) | `verb_id`; `subject_kind`(='subject'), `subject_id` | `subject` (name → create-or-resolve
+a person via `register_svpor_subject`, only when kind='subject'); `object_kind`+`object_id` (defaulted to
+the episode on the scoped route); optional `predicate`|`predicate_id`, `valid_from`, `valid_to`,
+`confidence`, `provenance`(='provided'), `source_package_id`, `metadata`. `*_kind` ∈
+('subject','verb','document','episode_object','memory','source_package','claim','fact','memory_detail_object').
+FK violation on a bad endpoint id → 422; unknown verb/predicate name → 422; bad kind → 422; idempotent
+on the five-tuple (re-link returns the existing id). `document` is a valid kind, so a 0.81.0-uploaded
+document links straight to an event by `document_id`.
 
 ### 4.10 List denormalization
 
@@ -399,7 +426,6 @@ Other list endpoints may add similar fields as the client surfaces concrete need
 The following are explicitly **not** in v1:
 
 - `/v1/pools/{id}/join`, `/leave`, `/tags`, and `DELETE /v1/pools/{id}` — unverified client conventions.
-- `/v1/episodes/{id}` plus list / get / patch / close / reopen / delete — unverified.
 - `/v1/episodes/{id}/replay` — deferred.
 - Token issuance/revocation endpoints — admin operation, not API.
 - CORS / browser callers — Electron client only.
