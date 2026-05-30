@@ -254,7 +254,8 @@ No autoloader. No namespace. No class hierarchy. The file is < 200 lines.
 
 ## 4. Functional — Endpoints
 
-This is the complete v1 surface. Total: **32 endpoint files** under `/var/www/html/v1/`. Each row is one file.
+This is the v1 surface. Total: **46 endpoint files** under `/var/www/html/v1/` (evolving as the
+maludb_core facade grows; §4.11 added the 0.83.0 typed-attribute layer). Each row is one file.
 
 All endpoints require a valid bearer token (§1.4) unless explicitly noted.
 
@@ -291,6 +292,9 @@ against the real schema; the public JSON contract is preserved by aliasing in SQ
 | `documents` resource | metadata in `maludb_document`, **bytes in `maludb_source_package.content_bytes`** (bytea). Upload = direct INSERT into both (ids sequence-assigned); `content_size`+`sha256 content_hash` computed by the API. GET = metadata only; binary download deferred (§6). DELETE removes both rows. |
 | `notes` resource (§4.5) | rows in `maludb_memory`: `id`→memory_id (sequence), `title`→title, `body`→summary, `type`→memory_kind (default `note`; `issue` enables close/reopen), `project_id`→`payload_jsonb.project_id`. Issue state in `issue_closed_at`. CRUD + close/reopen all implemented (needed `validate_payload` + `issue_closed_at`, added server-side 2026-05-27). |
 | `episodes` resource (§4.9) | Created via `maludb_core.register_episode(kind,title,summary,payload,occurred_at,occurred_until,sensitivity)`. It's SECURITY INVOKER, so the endpoint runs it with `SET LOCAL search_path TO public, maludb_core` (public first → `owner_schema='public'` tenant ownership; maludb_core in path → resolves base tables). POST-only in v1; readback is qualified within the same txn. |
+| `attributes` resource (§4.11) | view `maludb_svpor_attribute` (writable) + `maludb_svpor_attribute_create/_set_provenance/_delete`. Typed property of `(target_kind, target_id)`; `target_kind` is any node kind **or** `svpor_statement` (edge attributes). Upsert on (target, attr_name). Value columns: `value_timestamp/value_range(tstzrange)/value_numeric/value_text/value_jsonb`; carries `unit`, `provenance`, `confidence`, `valid_from/valid_to`, `metadata_jsonb`, and external-ref pointer `ref_source/ref_entity/ref_key`. Same `db_tx_core()` search-path rule as episodes. |
+| `attribute-templates` resource (§4.11) | view `maludb_attribute_template` + `maludb_attribute_template_create/_delete`. The form catalog: `applies_to` ∈ (episode_type, document_type, subject_type, verb), `value_type` ∈ (timestamp, tstzrange, numeric, text, jsonb, reference), `requirement` ∈ (required, recommended, optional). Create + delete only (no PATCH). |
+| `attribute-check` (§4.11) | `maludb_attribute_check(target_kind, target_id) → jsonb {applies_to, type_value, missing_required[], fields[]}`. Advisory completeness check — the DB never rejects on missing attributes. |
 
 ### 4.1 Subjects
 
@@ -402,6 +406,25 @@ the episode on the scoped route); optional `predicate`|`predicate_id`, `valid_fr
 FK violation on a bad endpoint id → 422; unknown verb/predicate name → 422; bad kind → 422; idempotent
 on the five-tuple (re-link returns the existing id). `document` is a valid kind, so a 0.81.0-uploaded
 document links straight to an event by `document_id`.
+
+### 4.11 Typed attributes + templates — maludb_core 0.83.0
+
+0.83.0 adds typed properties ("attributes") on any node **and** edge, a template catalog that
+drives forms, and an advisory completeness check. Attributes participate in the same
+provenance review workflow as statements (`provided`/`suggested`/`accepted`/`rejected`); the
+review queue is `GET /v1/attributes?provenance=suggested`, accepted/rejected via PATCH.
+
+**Search path:** the attribute facade views/functions reference their `malu$*` base tables
+unqualified, so every attribute / template / check endpoint runs inside `db_tx_core()`
+(`SET LOCAL search_path TO public, maludb_core`), exactly like episodes/statements (§4.9).
+
+| URL | File | Methods | Notes |
+|---|---|---|---|
+| `/v1/attributes` | `attributes.php` | GET, POST | GET filters `maludb_svpor_attribute` (`target_kind`/`target_id`/`attr_name`/`provenance`/`limit`). POST = create/**upsert** via `maludb_svpor_attribute_create(...)` (idempotent on target+attr_name). `target_kind` = any node kind **or** `svpor_statement` (edge attrs). Body: `{target_kind(req), target_id(req), attr_name(req), value_timestamp?, value_range?, value_numeric?, value_text?, value_jsonb?, unit?, provenance?(='provided'), confidence?, valid_from?, valid_to?, metadata?, ref_source?, ref_entity?, ref_key?}`. |
+| `/v1/attributes/{id}` | `attributes_id.php` | GET, PATCH, DELETE | GET one row. PATCH `{provenance}` → `..._set_provenance` (the accept/reject transition; only provenance is patchable — re-POST to change a value). DELETE → `..._delete`. |
+| `/v1/attribute-templates` | `attribute-templates.php` | GET, POST | GET catalog, filter `?applies_to=&type_value=` (drives forms). POST = create via `maludb_attribute_template_create(...)`. Bad enum (`applies_to`/`value_type`/`requirement`) → 422. |
+| `/v1/attribute-templates/{id}` | `attribute-templates_id.php` | GET, DELETE | Read/remove one template. No PATCH (the 0.83.0 surface exposes only create + delete) → 405. |
+| `/v1/attribute-check` | `attribute-check.php` | GET | `?target_kind=&target_id=` → `maludb_attribute_check(...)` jsonb `{applies_to, type_value, missing_required[], fields[]}`. Advisory only. |
 
 ### 4.10 List denormalization
 

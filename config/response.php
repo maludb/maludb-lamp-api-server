@@ -270,6 +270,116 @@ function svpor_create_statement(array $body, ?array $force_object = null): array
 }
 
 /* ---------------------------------------------------------------------------
+ * Typed-attribute helpers (maludb_core 0.83.0+) — shared by attributes.php and
+ * attributes_id.php. An attribute is a typed property on any node OR edge,
+ * addressed by (target_kind, target_id); target_kind includes 'svpor_statement'
+ * so graph edges carry attributes too. Created/upserted (on target+attr_name)
+ * via the idempotent maludb_svpor_attribute_create(...) facade. Both endpoints
+ * call svpor_create_attribute() inside db_tx_core() (the facade references its
+ * malu$* base tables unqualified, so it needs maludb_core on the search_path).
+ * ------------------------------------------------------------------------- */
+
+/** Read-side column list for a maludb_svpor_attribute row. */
+function svpor_attribute_cols(): string {
+    return "attribute_id AS id, target_kind, target_id, attr_name,
+            value_timestamp, value_range, value_numeric, value_text, value_jsonb,
+            unit, provenance, confidence, valid_from, valid_to,
+            metadata_jsonb AS metadata, created_at, ref_source, ref_entity, ref_key";
+}
+
+/** Normalize scalar types on an attribute row in place. */
+function shape_attribute(array &$r): void {
+    foreach (['id', 'target_id'] as $k) {
+        $r[$k] = $r[$k] === null ? null : (int) $r[$k];
+    }
+    foreach (['value_numeric', 'confidence'] as $k) {
+        $r[$k] = $r[$k] === null ? null : (float) $r[$k];
+    }
+    // Decode as objects (not assoc) so empty values stay {} rather than [].
+    $r['value_jsonb'] = $r['value_jsonb'] === null ? null : json_decode($r['value_jsonb']);
+    $r['metadata']    = $r['metadata']    === null ? null : json_decode($r['metadata']);
+    // value_range (tstzrange) is left as its text form.
+}
+
+/**
+ * Create/upsert an attribute from a request body and return the (shaped) row.
+ *
+ * MUST run inside db_tx_core(). Upsert is on (target_kind, target_id, attr_name).
+ * Recognized $body keys:
+ *   target_kind (req), target_id (req int), attr_name (req), value_timestamp,
+ *   value_range, value_numeric, value_text, value_jsonb, unit,
+ *   provenance (default 'provided'), confidence, valid_from, valid_to,
+ *   metadata (object), ref_source, ref_entity, ref_key.
+ * $force_target = ['kind'=>…,'id'=>…] overrides target_kind/target_id (scoped routes).
+ *
+ * All shape/required checks (json_error 400/422) run before any DB write.
+ */
+function svpor_create_attribute(array $body, ?array $force_target = null): array {
+    // ---- phase 1: parse + shape-validate (no DB writes) ----
+    if ($force_target !== null) {
+        $target_kind = (string) $force_target['kind'];
+        $target_id   = (int) $force_target['id'];
+    } else {
+        $target_kind = isset($body['target_kind']) ? trim((string) $body['target_kind']) : '';
+        if ($target_kind === '') json_error('missing_field', 'Field "target_kind" is required.', 400);
+        if (!isset($body['target_id']) || !is_int($body['target_id'])) {
+            json_error('validation_failed', '"target_id" must be an integer.', 422);
+        }
+        $target_id = (int) $body['target_id'];
+    }
+
+    $attr_name = isset($body['attr_name']) ? trim((string) $body['attr_name']) : '';
+    if ($attr_name === '') json_error('missing_field', 'Field "attr_name" is required.', 400);
+
+    foreach (['value_numeric', 'confidence'] as $k) {
+        if (array_key_exists($k, $body) && $body[$k] !== null && !is_numeric($body[$k])) {
+            json_error('validation_failed', "\"$k\" must be a number.", 422);
+        }
+    }
+
+    $value_timestamp = isset($body['value_timestamp']) ? (string) $body['value_timestamp'] : null;
+    $value_range     = isset($body['value_range'])     ? (string) $body['value_range']     : null;
+    $value_numeric   = (array_key_exists('value_numeric', $body) && $body['value_numeric'] !== null) ? (string) $body['value_numeric'] : null;
+    $value_text      = isset($body['value_text'])      ? (string) $body['value_text']      : null;
+    $value_jsonb     = array_key_exists('value_jsonb', $body) && $body['value_jsonb'] !== null ? json_encode($body['value_jsonb']) : null;
+    $unit            = isset($body['unit'])            ? (string) $body['unit']            : null;
+    $provenance      = isset($body['provenance']) && trim((string) $body['provenance']) !== '' ? (string) $body['provenance'] : 'provided';
+    $confidence      = (array_key_exists('confidence', $body) && $body['confidence'] !== null) ? (string) $body['confidence'] : null;
+    $valid_from      = isset($body['valid_from']) ? (string) $body['valid_from'] : null;
+    $valid_to        = isset($body['valid_to'])   ? (string) $body['valid_to']   : null;
+    $metadata        = isset($body['metadata']) && is_array($body['metadata']) ? json_encode($body['metadata']) : '{}';
+    $ref_source      = isset($body['ref_source']) ? (string) $body['ref_source'] : null;
+    $ref_entity      = isset($body['ref_entity']) ? (string) $body['ref_entity'] : null;
+    $ref_key         = isset($body['ref_key'])    ? (string) $body['ref_key']    : null;
+
+    // ---- phase 2: upsert via the facade (named args; idempotent on target+attr_name) ----
+    $row = db_one(
+        "SELECT maludb_svpor_attribute_create(
+                    p_target_kind     => ?, p_target_id => ?, p_attr_name => ?,
+                    p_value_timestamp => ?::timestamptz,
+                    p_value_range     => ?::tstzrange,
+                    p_value_numeric   => ?::numeric,
+                    p_value_text      => ?,
+                    p_value_jsonb     => ?::jsonb,
+                    p_unit            => ?,
+                    p_provenance      => ?,
+                    p_confidence      => ?::numeric,
+                    p_valid_from      => ?::timestamptz,
+                    p_valid_to        => ?::timestamptz,
+                    p_metadata_jsonb  => ?::jsonb,
+                    p_ref_source      => ?, p_ref_entity => ?, p_ref_key => ?
+                ) AS id",
+        [$target_kind, $target_id, $attr_name, $value_timestamp, $value_range, $value_numeric,
+         $value_text, $value_jsonb, $unit, $provenance, $confidence, $valid_from, $valid_to,
+         $metadata, $ref_source, $ref_entity, $ref_key]
+    );
+
+    $attr = db_one("SELECT " . svpor_attribute_cols() . " FROM maludb_svpor_attribute WHERE attribute_id = ?", [(int) $row['id']]);
+    shape_attribute($attr);
+    return $attr;
+}
+
+/* ---------------------------------------------------------------------------
  * Responses (requirements.md §1.5, §2.2, §2.3)
  * ------------------------------------------------------------------------- */
 

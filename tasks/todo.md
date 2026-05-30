@@ -324,3 +324,208 @@ routing = **both** general `/statements` + `/statements/{id}` and episode-scoped
   test files reuse one fixed name ("Regression Attendee") to bound residue to a single row.
 - FK violations (23503) and bad kinds (22023) map to 422; case-insensitive label dup (23505) → 409 —
   all via the existing global handler, no new mapping code.
+
+---
+
+# Phase 12 — Typed attributes + attribute templates (maludb_core 0.83.0)
+
+Episodes/events + SVO statements (note §1–2) shipped in Phase 11. This phase builds the
+**new 0.83.0** surface: typed attributes on nodes *and* edges (§3), the attribute-template
+form catalog + completeness check (§4), and the attribute side of the review workflow (§5).
+
+All new write/read paths go through the per-schema `maludb_*` facade (RLS-scoped to
+`current_schema()`); never touch `maludb_core.malu$*` directly. The attribute facade
+functions reference `malu$*` base tables unqualified, so attribute + check endpoints run
+inside the existing `db_tx_core()` (txn + `SET LOCAL search_path TO public, maludb_core`),
+exactly like episodes/statements. Template picker DML mirrors `episode-types`/`document-types`
+(direct writable-view DML on the default path).
+
+## Proposed endpoint surface (5 new files → 37 total)
+
+| URL | File | Methods | Notes |
+|---|---|---|---|
+| `/v1/attributes` | `attributes.php` | GET, POST | GET filter `?target_kind=&target_id=&attr_name=&provenance=&limit=`. POST = create/**upsert** via `maludb_svpor_attribute_create(...)` (idempotent on target+attr_name). `target_kind` is any node kind **or** `svpor_statement` (edge attrs). |
+| `/v1/attributes/{id}` | `attributes_id.php` | GET, PATCH, DELETE | GET row; PATCH `{provenance?}` → `..._set_provenance` (accept/reject); DELETE → `..._delete`. |
+| `/v1/attribute-templates` | `attribute-templates.php` | GET, POST | GET catalog, filter `?applies_to=&type_value=` (drives forms). POST = create. |
+| `/v1/attribute-templates/{id}` | `attribute-templates_id.php` | GET, DELETE | Read / remove one template row. (No PATCH — note exposes only create/_delete.) |
+| `/v1/attribute-check` | `attribute-check.php` | GET | `?target_kind=&target_id=` → `maludb_attribute_check(...)` jsonb `{…, missing_required[], fields[]}`. Advisory completeness check for form submit. |
+
+## Plan
+
+- [x] **Shared helpers in `config/response.php`** — `svpor_attribute_cols()`, `shape_attribute()`
+  (int/float casts, value_jsonb+metadata as objects, tstzrange left as text), `svpor_create_attribute()`
+  (parse + shape-validate before any write, then upsert via `maludb_svpor_attribute_create(...)` — all
+  17 named args).
+- [x] `html/v1/attributes.php` — GET (filtered list, `?provenance=suggested` review queue) + POST upsert.
+- [x] `html/v1/attributes_id.php` — GET / PATCH(set-provenance, only field patchable) / DELETE.
+- [x] `html/v1/attribute-templates.php` — GET (catalog + `applies_to`/`type_value` filter) + POST create
+  (via `maludb_attribute_template_create`, run in `db_tx_core()`).
+- [x] `html/v1/attribute-templates_id.php` — GET + DELETE (no PATCH → 405).
+- [x] `html/v1/attribute-check.php` — GET `?target_kind=&target_id=` → `maludb_attribute_check`.
+- [x] **Tests** — 5 self-cleaning curl files (node + edge attr, idempotent upsert, FK→422, provenance
+  transition, template CRUD, check before/after).
+- [x] **Docs** — requirements.md §4.11 + 3 §4.0 mapping rows + endpoint count; `docs/activity.md`; this review.
+- [x] **Verify live** — full suite green against `https://fastapi.maludb.org`; DB left clean.
+
+## Open decisions — RESOLVED (confirmed by user 2026-05-29)
+
+- D1 — **Attribute URL surface**: ✔ general `/v1/attributes` (+`/{id}`).
+- D2 — **Template mutability**: ✔ create + delete only (no PATCH → 405).
+- D3 — **`attribute-check` shape**: ✔ top-level `GET /v1/attribute-check`.
+
+### Review (Phase 12)
+
+**Files added:** `html/v1/attributes.php`, `attributes_id.php`, `attribute-templates.php`,
+`attribute-templates_id.php`, `attribute-check.php` + 5 `tests/*_curls.sh`. **Changed:**
+`config/response.php` (attribute helpers), `requirements.md` (§4.11), `docs/activity.md`.
+
+**Verified live** (dev token, real host; DB left clean): node attribute create + idempotent upsert
+(same id, value updated 12→15), GET filter, `?provenance=suggested` review queue, suggested→accepted
+PATCH, missing attr_name→400, bad value_numeric→422, bad target→422, **edge attribute**
+(target_kind=svpor_statement), attribute-check before/after (seeded `duration_minutes` template on
+Meeting), template create/get/delete, bad value_type→422, PATCH-on-template→405, GET/DELETE missing→404.
+
+**Notes:** attribute PATCH only mutates `provenance` (the review transition); re-POST to change a value
+(upsert on target+attr_name). Template POST uses `maludb_attribute_template_create` (not direct view DML)
+for the canonical create path; everything runs in `db_tx_core()`. FK/enum violations → 422 via the
+existing global handler — no new mapping code.
+
+---
+
+# 0.86.1 — remaining surface (Phases 12–16). Live-verified 2026-05-29.
+
+**Version reality check (DB introspection, read-only):** the live `zozocal` DB exposes the *full*
+maludb_core 0.86.1 surface today (we're catching the API up from 0.82.0). Confirmed present in
+`public`: views `maludb_svpor_attribute`, `maludb_attribute_template`, `maludb_object_embedding`,
+`maludb_edge`, `maludb_subject_with_attributes`, `maludb_episode_with_attributes`,
+`maludb_document_with_attributes`; functions `maludb_svpor_attribute_create/_set_provenance/_delete`,
+`maludb_attribute_template_create/_delete`, `maludb_attribute_check`, `maludb_object_get`,
+`maludb_attributes_apply`, `maludb_register_object_embedding`, `maludb_semantic_search`,
+`maludb_graph_neighbors`, `maludb_graph_walk`, `maludb_reference_view_sql`,
+`maludb_create_reference_view`, `maludb_document_get`, `maludb_upload_document`. **Verified
+signatures** captured below per phase (named args, several with trailing defaults).
+
+**Conventions reused (all phases):** bearer auth; `db_query/db_one/db_exec`; `json_response/json_error`;
+`path_id`; global SQLSTATE→HTTP map (23505→409, 23503/22023/22P02/P0001→422); hyphenated slugs for
+picker/aggregate resources; one PHP file per URL path; one self-cleaning curl test per endpoint;
+`php -l` + live verify against `https://fastapi.maludb.org`, leaving the DB clean. Facade
+functions/views reference `malu$*` unqualified → run inside the existing `db_tx_core()`
+(txn + `SET LOCAL search_path TO public, maludb_core`); plain writable-view DML on `*_type`-style
+pickers stays on the default path.
+
+**Endpoint count:** 41 today → ~52 after Phases 12–16.
+
+Build order is dependency-aware: **12 → 13 → 15 → 14 → 16** (object-with-attributes builds on
+attributes; references build on attributes; graph/semantic are independent; document text-upload last).
+
+## Phase 12 — Typed attributes + templates (§4)  *(already drafted above; signatures now confirmed)*
+- `maludb_svpor_attribute_create(p_target_kind, p_target_id, p_attr_name, p_value_timestamp?,
+  p_value_range?, p_value_numeric?, p_value_text?, p_value_jsonb?, p_unit?, p_provenance='provided',
+  p_confidence?, p_valid_from?, p_valid_to?, p_metadata_jsonb='{}', p_ref_source?, p_ref_entity?,
+  p_ref_key?) → bigint` (upsert on (target, attr_name)).
+- `maludb_svpor_attribute_set_provenance(p_attribute_id, p_provenance) → boolean`;
+  `maludb_svpor_attribute_delete(p_attribute_id) → integer`.
+- `maludb_attribute_template_create(p_applies_to, p_type_value, p_attr_name, p_value_type,
+  p_requirement='optional', p_label?, p_description?, p_unit?, p_allowed_values?, p_default_value?,
+  p_display_order?) → bigint`; `maludb_attribute_template_delete(p_template_id) → integer`.
+- `maludb_attribute_check(p_target_kind, p_target_id) → jsonb`.
+- Files: `attributes.php`, `attributes_id.php`, `attribute-templates.php`,
+  `attribute-templates_id.php`, `attribute-check.php` + 5 curl files. (See plan + D1–D3 above.)
+- Note: the writable views (`maludb_svpor_attribute`, `maludb_attribute_template`) are INSERT/UPDATE-able,
+  but we prefer the `_create` functions for the dedup/upsert semantics; template pickers may use direct
+  view DML like `document-types` where simpler.
+
+## Phase 13 — Object-with-attributes ergonomics (§5)
+- **Read (detail):** `GET /v1/objects/{kind}/{id}` → `maludb_object_get(p_target_kind, p_target_id) → jsonb`
+  (`{kind, id, object, attributes, [statements, details]}`). The canonical `(object_kind, object_id)`
+  handle resource — feeds traversal/attribute calls.
+- **Read (list):** `GET /v1/{subjects|episodes|documents}?with=attributes` (or a `with_attributes=1`
+  flag on the existing list endpoints) → base columns + an `attributes` jsonb column from the
+  `maludb_*_with_attributes` views. **D4 below.**
+- **Write (atomic):** `POST /v1/objects/{kind}` → in one `db_tx_core()`: `maludb_register_*`/insert the
+  object, then `maludb_attributes_apply(p_target_kind, p_target_id, p_attributes jsonb) → integer`
+  (array of `{attr_name, value_*…, unit?, provenance?, confidence?, ref_source?, ref_entity?, ref_key?}`).
+  Atomic object + attributes. **D5 below** (which object kinds the single-POST supports — start with
+  episode + subject, the two with `register_*` helpers we already use).
+- Files: `objects_id.php` *(routes `/v1/objects/{kind}/{id}` — note: kind is a string, not numeric, so
+  this needs a routing tweak — **see D6**)*, plus `objects.php` for POST; possibly extend existing list
+  endpoints for the `with=attributes` read. + curl files.
+- **Routing caveat (D6):** the `.htaccess` rules assume `{id}` is numeric (`[0-9]+`). The
+  `(object_kind, object_id)` handle has a *text* kind segment. Options: (a) add one rewrite rule for
+  `/v1/objects/<kind>/<id>` → `object_get.php?kind=&id=`; (b) use query params `/v1/object?kind=&id=`.
+  Pick before building (recommend (a): one new rule, clean URLs, keeps the handle canonical).
+
+## Phase 15 — Graph traversal + embeddings + semantic search (§7)  *(built before 14; independent)*
+- `GET /v1/graph/neighbors?kind=&id=&direction=both&rel=` → `maludb_graph_neighbors(p_kind, p_id,
+  p_direction='both', p_rel_filter text[]) → TABLE(neighbor_kind, neighbor_id, rel, edge_store,
+  confidence, provenance, label)`.
+- `GET /v1/graph/walk?kind=&id=&max_depth=4&direction=both&rel=` → `maludb_graph_walk(p_kind, p_id,
+  p_max_depth=4, p_direction='both', p_rel_filter text[]) → TABLE(object_kind, object_id, depth, rel,
+  edge_store, label, path text[])`.
+- `GET /v1/edges?source_kind=&source_id=&target_kind=&target_id=&rel=&limit=` → read `maludb_edge`.
+- `POST /v1/embeddings` (upsert) → `maludb_register_object_embedding(p_object_kind, p_object_id,
+  p_embedding bytea, p_embedding_dim, p_embedding_space, p_embedding_model?, p_source_field='default',
+  p_sub_key='', p_provenance='provided') → bigint`. **D7: embeddings are bytea but transport is JSON →
+  accept base64 in the body (recommended), decode to bytea via `decode(?, 'base64')`.** Optionally also
+  GET/DELETE on `maludb_object_embedding`.
+- `POST /v1/semantic-search` → `maludb_semantic_search(p_query_embedding bytea, p_object_kinds text[],
+  p_k=10, p_embedding_space?, p_metric='cosine') → TABLE(object_kind, object_id, source_field, sub_key,
+  score, label)`. Body `{embedding(base64), object_kinds?, k?, embedding_space?, metric?}`.
+- **Convenience chain:** `POST /v1/semantic-search?then=walk` (or `/v1/search-related`) → semantic_search
+  top hit(s) → feed `(object_kind, object_id)` into `maludb_graph_walk`. **D8: build the chain endpoint
+  now or defer?** (recommend a thin `search-related` that does search→walk in one tx.)
+- Routing: `/v1/graph/neighbors` & `/v1/graph/walk` are 2-segment non-numeric → need a rewrite rule
+  (same tweak family as D6). `/v1/edges`, `/v1/embeddings`, `/v1/semantic-search` are plain 1-segment.
+- Files: `graph_neighbors.php`/`graph_walk.php` (or one `graph.php`), `edges.php`, `embeddings.php`,
+  `semantic-search.php`, optional `search-related.php` + curl files.
+
+## Phase 14 — External references (§6)
+- **Set/resolve ref on an object:** an external reference is just an attribute carrying
+  `ref_source/ref_entity/ref_key` (value_type='reference'); use `value_type='suggested'+confidence` for
+  proposed matches. So *setting* a reference = Phase-12 attribute POST with those fields — likely **no new
+  write endpoint**, just document the pattern + a focused `GET /v1/references?ref_source=&ref_entity=&
+  ref_key=` reverse-lookup (filter `maludb_svpor_attribute`) that returns the `(target_kind, target_id)`
+  handles pointing at an external record. **D9: dedicated `/v1/references` reverse-lookup endpoint vs.
+  reuse `GET /v1/attributes?ref_source=…`** (recommend a small dedicated reverse-lookup for clarity).
+- **Reference-view scaffolder (admin, DDL):** `maludb_reference_view_sql(...) → text` (returns CREATE
+  VIEW DDL, no execution) and `maludb_create_reference_view(..., p_replace=false) → text` (executes it,
+  SECURITY INVOKER in the caller's schema). **D10 — policy call:** the API's standing rule is *DML only,
+  no DDL* (db-requirements.md). `maludb_create_reference_view` runs DDL. Options: (a) expose only the
+  *preview* `reference_view_sql` (returns DDL text, safe, no execution) and leave actual view creation to
+  the DBMS project; (b) expose a guarded admin `POST /v1/admin/reference-views` that calls
+  `maludb_create_reference_view`. **Recommend (a)** to honor the no-DDL rule unless you want the admin path.
+- Files: `references.php` (reverse-lookup GET), `reference-view-sql.php` (preview POST/GET), and—only if
+  D10=(b)—`admin_reference-views.php`. + curl files.
+
+## Phase 16 — Document text-upload path + document_get + with-attributes (§1 leftovers)
+- The current `documents.php` POST uploads *binary* via `maludb_source_package.content_bytes` (kept).
+  0.86.1 adds a *text-content* path: `maludb_upload_document(p_title, p_content_text, p_source_type=
+  'document', p_content_jsonb?, p_media_type?, p_projects text[], p_subjects text[], p_verbs text[],
+  p_events text[], p_metadata_jsonb='{}', p_document_type?) → document_id` (auto-tags
+  projects/subjects/verbs/events by name). **D11: add a JSON `POST /v1/documents` branch (when
+  `Content-Type: application/json` with `content_text`) alongside the existing multipart binary branch.**
+- `GET /v1/documents/{id}` → enrich via `maludb_document_get(p_document_id) → jsonb` (document + tags +
+  svpor hints), replacing/augmenting the current hand-built detail.
+- `documents` list `with=attributes` via `maludb_document_with_attributes` (folds into Phase 13's list flag).
+- Download/reingest (`source_package`/`reingest_source_package`) — **defer/confirm**: not yet introspected;
+  revisit after D11.
+
+## Consolidated open decisions (check in before building)
+- **D1–D3** (Phase 12): attribute URL surface / template mutability / attribute-check shape — *see above*.
+- **D4** — with-attributes list: a `?with=attributes` flag on existing list endpoints (recommended) vs.
+  new `/v1/.../with-attributes` routes.
+- **D5** — single-POST object kinds: start with episode + subject (have `register_*`) vs. all kinds.
+- **D6** — non-numeric handle routing for `/v1/objects/{kind}/{id}` (and `/v1/graph/*`): add a rewrite
+  rule (recommended) vs. query-param style `/v1/object?kind=&id=`.
+- **D7** — embedding transport: base64 in JSON body → `decode(?, 'base64')` to bytea (recommended).
+- **D8** — build the `search-related` (semantic→walk) chain now vs. defer.
+- **D9** — references reverse-lookup: dedicated `/v1/references` vs. reuse `GET /v1/attributes?ref_*`.
+- **D10** — reference-view scaffolder: preview-DDL only, honoring the no-DDL rule (recommended) vs. a
+  guarded admin endpoint that executes `maludb_create_reference_view`.
+- **D11** — documents JSON text-upload branch via `maludb_upload_document` (recommended) + `document_get`
+  detail; download/reingest deferred pending introspection.
+
+## Suggested first slice
+Phase 12 (attributes + templates + check) is fully spec'd, signatures confirmed, and unblocks 13/14.
+Recommend building it first as one PR, then 13, 15, 14, 16 as follow-on slices — each verified live and
+committed on its own, matching the established per-phase rhythm.

@@ -396,3 +396,46 @@ with labels, NULL when missing. (One probe episode leaked via autocommit and was
   earlier unpushed commits.
 
 ---
+
+## Phase 12 — Typed attributes + templates + attribute-check (maludb_core 0.83.0) — 2026-05-29
+
+### Prompt
+> Context: expand the application API over MaluDB maludb_core 0.86.1. [Big spec covering §1 documents,
+> §2 episodes, §3 SVO statements, §4 attributes + templates, §5 object-with-attributes ergonomics,
+> §6 external references, §7 graph traversal + embeddings + semantic search; honor the
+> provenance/confidence review flow and caller-supplied bytea embeddings everywhere.] Build documents,
+> episodes, statements, attributes (+templates/check), object-with-attributes, external references,
+> graph traversal + semantic search, with tests.
+
+**Check-in (per CLAUDE.md #3):** wrote a grounded plan to `tasks/todo.md` for the whole remaining
+0.86.1 surface (Phases 12–16) after live-introspecting the DB, then confirmed four decisions with the
+user: (1) build all of 12–16 in sequence (commit per phase); (2) add an `.htaccess` rewrite rule for
+non-numeric `(kind,id)` / `/v1/graph/*` handles; (3) reference-view scaffolder = **preview DDL only**
+(honor the no-DDL rule); (4) attributes use a **general `/v1/attributes`** surface. Took the recommended
+defaults on the minor decisions (with=attributes flag, episode+subject single-POST, base64 embeddings,
+build search-related, dedicated /v1/references, template create+delete, top-level attribute-check).
+
+**Discovery (live DB introspection, read-only):** the full 0.86.1 facade is already deployed in
+`zozocal` (we're catching the API up from 0.82.0). Confirmed every view/function from the spec and
+captured exact named-arg signatures (recorded in `tasks/todo.md`). The attribute facade
+views/functions reference `malu$*` unqualified → same `db_tx_core()` search-path rule as episodes.
+
+**Actions:**
+- `config/response.php` — added the typed-attribute helpers `svpor_attribute_cols()`,
+  `shape_attribute()` (int/float casts; value_jsonb + metadata decoded as objects; tstzrange left as
+  text), and `svpor_create_attribute()` (parse + shape-validate before any write, then upsert via
+  `maludb_svpor_attribute_create(...)` with all 17 named args).
+- Added 5 endpoint files: `attributes.php` (GET filter incl. `?provenance=suggested` review queue +
+  POST upsert), `attributes_id.php` (GET / PATCH-provenance / DELETE), `attribute-templates.php`
+  (catalog GET + POST create), `attribute-templates_id.php` (GET + DELETE, no PATCH → 405),
+  `attribute-check.php` (GET advisory completeness).
+- 5 self-cleaning curl test files. `php -l` clean on all 6 files.
+- Verified live against `https://fastapi.maludb.org`: node attribute create + idempotent upsert (same
+  id, value updated), GET filter, suggested→accepted PATCH, missing attr_name→400, bad value_numeric→422,
+  bad target→422, **edge attribute** (target_kind=svpor_statement), attribute-check before/after
+  (seeded `duration_minutes` template for Meeting), template create/get/delete, bad value_type→422,
+  PATCH-on-template→405. DB left clean (one reusable "Regression Attendee" svpor subject persists by
+  design). Two probe episodes leaked via the test harness and were deleted (ids 25, 26).
+- Updated `requirements.md` (new §4.11 + three §4.0 mapping rows + endpoint count) and this log.
+
+---
