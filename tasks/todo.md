@@ -455,6 +455,19 @@ attributes; references build on attributes; graph/semantic are independent; docu
   `/v1/objects/<kind>/<id>` → `object_get.php?kind=&id=`; (b) use query params `/v1/object?kind=&id=`.
   Pick before building (recommend (a): one new rule, clean URLs, keeps the handle canonical).
 
+### Review (Phase 13) — ✅ DONE 2026-05-29
+Decisions taken: D4 = `?with=attributes` flag on existing lists; D5 = subject + episode_object;
+D6 = (a) two `.htaccess` handle rewrite rules.
+- [x] `html/v1/objects_id.php` — `GET /v1/objects/{kind}/{id}` → `maludb_object_get`.
+- [x] `html/v1/objects.php` — `POST /v1/objects/{kind}` atomic create + `maludb_attributes_apply` (subject, episode_object).
+- [x] `config/response.php` — `attach_attributes()` helper.
+- [x] `?with=attributes` wired into `subjects.php` / `episodes.php` / `documents.php` GET.
+- [x] `html/.htaccess` — two handle rules ahead of the generic rules.
+- [x] `objects_curls.sh`, `objects_id_curls.sh` (self-clean attributes first — no FK cascade).
+- [x] Verified live (atomic create both kinds, handle GET, with=attributes, 404/422/400/405); DB clean.
+- [x] Docs: requirements.md §4.12 + §1.3 routing; activity.md.
+- **Finding:** episode/subject delete does NOT cascade typed attributes (documented).
+
 ## Phase 15 — Graph traversal + embeddings + semantic search (§7)  *(built before 14; independent)*
 - `GET /v1/graph/neighbors?kind=&id=&direction=both&rel=` → `maludb_graph_neighbors(p_kind, p_id,
   p_direction='both', p_rel_filter text[]) → TABLE(neighbor_kind, neighbor_id, rel, edge_store,

@@ -379,6 +379,27 @@ function svpor_create_attribute(array $body, ?array $force_target = null): array
     return $attr;
 }
 
+/**
+ * For a list endpoint called with ?with=attributes: attach an `attributes` jsonb to
+ * each row from the given maludb_*_with_attributes view, matched on $pk_col = row['id'].
+ * One extra query inside db_tx_core() (the *_with_attributes views resolve their malu$*
+ * tables there). $view/$pk_col are endpoint constants (never user input).
+ */
+function attach_attributes(array &$rows, string $view, string $pk_col): void {
+    if (!$rows) return;
+    $ids   = array_map(fn($r) => (int) $r['id'], $rows);
+    $place = implode(',', array_fill(0, count($ids), '?'));
+    $attrs = db_tx_core(fn() => db_query(
+        "SELECT $pk_col AS id, attributes FROM $view WHERE $pk_col IN ($place)", $ids
+    ));
+    $byId = [];
+    foreach ($attrs as $a) {
+        $byId[(int) $a['id']] = $a['attributes'] === null ? null : json_decode($a['attributes']);
+    }
+    foreach ($rows as &$r) { $r['attributes'] = $byId[(int) $r['id']] ?? null; }
+    unset($r);
+}
+
 /* ---------------------------------------------------------------------------
  * Responses (requirements.md §1.5, §2.2, §2.3)
  * ------------------------------------------------------------------------- */

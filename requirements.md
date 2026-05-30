@@ -52,10 +52,20 @@ The directory must be writeable by `www-data`.
 
 ### 1.3 URL → file rewriting
 
-The single `.htaccess` in `/var/www/html/` contains exactly four rewrite rules, matched in order from longest path to shortest. Numeric `{id}` segments are captured into named query params (`id` for the first, `sub_id` for the second).
+The single `.htaccess` in `/var/www/html/` contains the rewrite rules, matched in order from
+most-specific to shortest. Numeric `{id}` segments are captured into named query params (`id`
+for the first, `sub_id` for the second). Two **handle** rules (added with §4.12) precede the
+generic rules because the `(object_kind, object_id)` handle has a *text* kind segment that the
+numeric-id rules can't match; they capture `kind` into `$_GET['kind']`.
 
 ```apache
 RewriteEngine On
+
+# Handle routes (NON-numeric kind segment) — must precede the generic numeric rules:
+# /v1/objects/<kind>/<id>  →  objects_id.php?kind=<kind>&id=<id>
+RewriteRule ^v1/objects/([a-zA-Z_][a-zA-Z0-9_-]*)/([0-9]+)$ v1/objects_id.php?kind=$1&id=$2 [QSA,L]
+# /v1/objects/<kind>       →  objects.php?kind=<kind>
+RewriteRule ^v1/objects/([a-zA-Z_][a-zA-Z0-9_-]*)$ v1/objects.php?kind=$1 [QSA,L]
 
 # 4-segment: /v1/<a>/<id>/<b>/<id>  →  <a>_id_<b>_id.php?id=…&sub_id=…
 RewriteRule ^v1/([a-zA-Z][a-zA-Z0-9-]*)/([0-9]+)/([a-zA-Z][a-zA-Z0-9-]*)/([0-9]+)$ \
@@ -254,8 +264,9 @@ No autoloader. No namespace. No class hierarchy. The file is < 200 lines.
 
 ## 4. Functional — Endpoints
 
-This is the v1 surface. Total: **46 endpoint files** under `/var/www/html/v1/` (evolving as the
-maludb_core facade grows; §4.11 added the 0.83.0 typed-attribute layer). Each row is one file.
+This is the v1 surface. Total: **48 endpoint files** under `/var/www/html/v1/` (evolving as the
+maludb_core facade grows; §4.11 added the 0.83.0 typed-attribute layer, §4.12 the object-with-attributes
+ergonomics). Each row is one file.
 
 All endpoints require a valid bearer token (§1.4) unless explicitly noted.
 
@@ -425,6 +436,32 @@ unqualified, so every attribute / template / check endpoint runs inside `db_tx_c
 | `/v1/attribute-templates` | `attribute-templates.php` | GET, POST | GET catalog, filter `?applies_to=&type_value=` (drives forms). POST = create via `maludb_attribute_template_create(...)`. Bad enum (`applies_to`/`value_type`/`requirement`) → 422. |
 | `/v1/attribute-templates/{id}` | `attribute-templates_id.php` | GET, DELETE | Read/remove one template. No PATCH (the 0.83.0 surface exposes only create + delete) → 405. |
 | `/v1/attribute-check` | `attribute-check.php` | GET | `?target_kind=&target_id=` → `maludb_attribute_check(...)` jsonb `{applies_to, type_value, missing_required[], fields[]}`. Advisory only. |
+
+### 4.12 Object-with-attributes ergonomics — maludb_core 0.85.0
+
+The `(object_kind, object_id)` **handle** is the canonical resource identifier across the
+graph/attribute/traversal surface. This section exposes reading a handle inline with its
+attributes, and creating an object + its attributes atomically.
+
+**Routing:** the handle has a *text* kind segment, so it can't use the generic numeric-id
+rewrites. Two `.htaccess` rules (placed before the generic ones) map
+`/v1/objects/<kind>/<id>` → `objects_id.php?kind=&id=` and `/v1/objects/<kind>` →
+`objects.php?kind=`. `object_kind` ∈ (subject, verb, document, episode_object, memory,
+source_package, claim, fact, memory_detail_object, svpor_statement).
+
+| URL | File | Methods | Notes |
+|---|---|---|---|
+| `/v1/objects/{kind}/{id}` | `objects_id.php` | GET | `maludb_object_get(kind, id)` → `{kind, id, object, attributes, [statements, details]}`. 404 on unknown handle. |
+| `/v1/objects/{kind}` | `objects.php` | POST | Atomic create: register the object then `maludb_attributes_apply(kind, id, attributes)`, return `maludb_object_get`. Supported kinds: **subject** (`{canonical_name, subject_type?, description?, classifier_md?, attributes?[]}` via `register_svpor_subject`) and **episode_object** (`{title, kind?, summary?, payload?, occurred_at?, occurred_until?, sensitivity?, provenance?, attributes?[]}` via `maludb_register_episode`). Other kinds → 422. |
+
+**Attribute-bearing lists:** the existing list endpoints `GET /v1/subjects`, `/v1/episodes`,
+`/v1/documents` accept **`?with=attributes`** — each row gains an `attributes` jsonb fetched
+from the corresponding `maludb_*_with_attributes` view (one extra batched query; existing
+fields unchanged).
+
+> **No-cascade caveat:** deleting an episode/subject does **not** delete its typed attributes
+> (no FK cascade in 0.85.0). Callers that hard-delete an object should delete its attributes
+> first (filter `GET /v1/attributes?target_kind=&target_id=`). Test files self-clean this way.
 
 ### 4.10 List denormalization
 

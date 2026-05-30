@@ -53,6 +53,10 @@ switch ($_SERVER['REQUEST_METHOD']) {
         }
         unset($r);
 
+        if (query_str('with', null, 40) === 'attributes') {
+            attach_attributes($rows, 'maludb_subject_with_attributes', 'subject_id');
+        }
+
         json_response(['subjects' => $rows]);
     }
 

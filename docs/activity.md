@@ -439,3 +439,25 @@ views/functions reference `malu$*` unqualified → same `db_tx_core()` search-pa
 - Updated `requirements.md` (new §4.11 + three §4.0 mapping rows + endpoint count) and this log.
 
 ---
+
+## Phase 13 — Object-with-attributes ergonomics (maludb_core 0.85.0) — 2026-05-29
+
+**Actions:**
+- `config/response.php` — added `attach_attributes()` (batched `?with=attributes` post-merge from a
+  `maludb_*_with_attributes` view; one extra query, existing row fields untouched).
+- Added `html/v1/objects_id.php` (`GET /v1/objects/{kind}/{id}` → `maludb_object_get`) and
+  `html/v1/objects.php` (`POST /v1/objects/{kind}` → atomic register_* + `maludb_attributes_apply` +
+  `maludb_object_get`, supporting subject + episode_object).
+- `html/.htaccess` — two handle rewrite rules (text kind segment) ahead of the generic numeric rules.
+- Wired `?with=attributes` into `subjects.php`, `episodes.php`, `documents.php` GET (minimal, additive).
+- 2 self-cleaning curl files (`objects_curls.sh`, `objects_id_curls.sh`).
+- `php -l` clean on all touched files. Verified live against `https://fastapi.maludb.org`: atomic
+  episode+2 attrs and subject+attr creates, handle GET round-trips, `?with=attributes` on episode/subject
+  lists, unknown handle→404, unsupported kind→422, missing field→400, bad attributes shape→422,
+  non-GET on handle→405. Confirmed the `.htaccess` handle rules resolve under the production Apache.
+- **Finding:** deleting an episode/subject does NOT cascade its typed attributes (no FK cascade in
+  0.85.0) — orphan attributes remain. Documented in requirements.md §4.12; test files delete attributes
+  first. Cleaned up the 3 probe orphans (attr ids 4/5/6); DB left clean.
+- Updated `requirements.md` (§4.12 + §1.3 routing + §4.0 count) and this log.
+
+---

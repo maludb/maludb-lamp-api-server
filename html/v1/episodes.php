@@ -64,6 +64,10 @@ switch ($_SERVER['REQUEST_METHOD']) {
         foreach ($rows as &$r) { shape_episode($r); }
         unset($r);
 
+        if (query_str('with', null, 40) === 'attributes') {
+            attach_attributes($rows, 'maludb_episode_with_attributes', 'episode_id');
+        }
+
         json_response(['episodes' => $rows]);
     }
 
