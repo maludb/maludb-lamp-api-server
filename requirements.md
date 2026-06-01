@@ -338,10 +338,21 @@ against the real schema; the public JSON contract is preserved by aliasing in SQ
 
 | URL | File | Methods | Notes |
 |---|---|---|---|
-| `/v1/documents` | `documents.php` | GET, POST | POST is `multipart/form-data` with parts `file`, `filename`, `mime_type`, `description`. Max size driven by PHP `upload_max_filesize` / `post_max_size` (start at 25 MB). |
-| `/v1/documents/{id}` | `documents_id.php` | GET, DELETE | GET returns metadata only; binary download endpoint is an open question (§6). |
+| `/v1/documents` | `documents.php` | GET, POST | POST is `multipart/form-data` with parts `file`, `filename`, `mime_type`, `description`, `document_type`, and optional comma-separated `projects` / `subjects`. Max size driven by PHP `upload_max_filesize` / `post_max_size` (start at 25 MB). |
+| `/v1/documents/{id}` | `documents_id.php` | GET, PATCH, DELETE | GET returns metadata + `primary_project_id` + `tags[]` (binary download is an open question §6). PATCH `{link,unlink:{projects[],subjects[]}}` adds/removes graph links. DELETE also removes the document's graph edges. |
+| `/v1/documents-backfill` | `documents-backfill.php` | POST | Runs `maludb_document_graph_backfill()` for the tenant schema (onboarding; idempotent) → `{"linked":<int>}`. |
 
 > **Client migration note:** the desktop client today calls `/v1/files`. The server exposes `/v1/documents` (per `api-calls.md` known-mismatch note and confirmed in spec). The client must be updated before this endpoint set is usable end-to-end. Tracked separately from this server-side spec.
+
+> **Documents as graph nodes (maludb_core 0.87.0).** Each `projects`/`subjects` name on a
+> document is wired into the unified graph: a `document --concerns|mentions|involves--> subject`
+> edge plus a soft tag carrying the resolved `tag_object_type`/`tag_object_id`, and
+> `primary_project_id` is set from the first project. Documents are thus reachable from the
+> graph endpoints (`/v1/graph/walk`, `/v1/graph/neighbors`, `/v1/edges`) and listed under
+> `documents[]` on project/subject detail pages. Subject resolution reuses an existing subject
+> as-is (never overriding its type), matching `maludb_upload_document`. Edge writes are
+> `provenance='provided'` (explicit user input). `/v1/graph/<op>` routing was added to
+> `.htaccess` so the 0.86.0 traversal endpoints resolve.
 
 ### 4.5 Notes
 

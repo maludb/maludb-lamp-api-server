@@ -461,3 +461,57 @@ views/functions reference `malu$*` unqualified → same `db_tx_core()` search-pa
 - Updated `requirements.md` (§4.12 + §1.3 routing + §4.0 count) and this log.
 
 ---
+
+## Phase 14 — Documents as first-class graph nodes (maludb_core 0.87.0) — 2026-06-01
+
+**Prompt:** "MaluDB maludb_core upgraded to 0.87.0 — documents are now first-class graph nodes.
+Update the API to expose and edit those graph links." (Surface `primary_project_id` + resolved
+tag `tag_object_type/tag_object_id`; add project/subject→documents listings via the graph; make
+upload + edit paths maintain the document→subject edges; add a backfill onboarding endpoint;
+keep edge writes `provenance='provided'`. Tests: upload-with-project, edit, remove, backfill.)
+Scope decision (asked): build the full write side — **upload wiring + PATCH edit**.
+
+**Finding that shaped the work:** the API's upload (`documents.php` POST) does *direct INSERTs*
+and never called `maludb_upload_document`, so it accepted no projects/subjects and created no
+tags/edges; `documents_id.php` was GET/DELETE only. So "upload already wires the graph" did not
+hold for this API — the wiring had to be added in API code via the public facades.
+
+**Actions:**
+- `config/response.php` — added the document↔graph helpers (all run inside `db_tx_core()`):
+  `document_link_spec()` (tag_kind → [subject_type, verb]: project/concerns, subject/mentions,
+  stakeholder/involves), `document_link_subject()` (resolve-or-create subject WITHOUT clobbering
+  an existing type — mirrors `maludb_core._document_graph_link`, since `register_svpor_subject`
+  would override the type — then idempotent `maludb_svpor_statement_create('document'→'subject')`
+  + upsert the soft tag's resolved object), `document_unlink_subject()` (delete edge via
+  `maludb_svpor_statement_delete`, delete the tag, repoint `primary_project_id` to the first
+  remaining project else NULL), and `document_neighbors()` (`maludb_graph_neighbors('subject',id,
+  'both', ARRAY['concerns','mentions','involves'])` filtered to `neighbor_kind='document'`).
+- `documents.php` — GET list now returns `primary_project_id`; POST accepts comma-separated
+  `projects`/`subjects`, wires each into the graph in one tx, and sets `primary_project_id` from
+  the first project.
+- `documents_id.php` — GET now returns `primary_project_id` + `tags[]` (with
+  `tag_object_type`/`tag_object_id`); added **PATCH** `{link,unlink:{projects[],subjects[]}}`
+  (unlink-then-link, adopt primary when unset); DELETE now also removes the document's
+  `svpor_statement` edges (deleting a document cascades soft tags but NOT edges → would dangle).
+- `projects_id.php` / `subjects_id.php` — detail GET now embeds `documents[]` from the graph.
+- `documents-backfill.php` (new) — POST → `maludb_document_graph_backfill()` (idempotent) →
+  `{"linked":<int>}`; GET→405, no token→401.
+- `html/.htaccess` — added the missing `/v1/graph/<op> → graph_<op>.php` rewrite (the 0.86.0
+  `graph_neighbors.php`/`graph_walk.php` were present but unrouted → 404; their own docstrings
+  assumed this rule). `/v1/edges` already routed via the 1-segment rule.
+- Tests: extended `documents_curls.sh` (graph-linked upload + walk + project documents[],
+  self-cleaning) and `documents_id_curls.sh` (replaced the now-wrong PATCH→405 case with a full
+  link/swap/remove lifecycle + 400/422 cases, self-cleaning); added `documents-backfill_curls.sh`.
+
+**Verified live against https://fastapi.maludb.org:** upload-with-project → `primary_project_id`
+set, tag `tag_object_id` resolved, `graph/walk` + `graph/neighbors` reach the document, project
+detail `documents[]` lists it; PATCH link/swap (primary repoints)/remove (edge gone, primary
+cleared, tag removed); bad PATCH shapes → 400/422; subject detail `documents[]`; backfill connects
+a tag-only (edge-less) document and is idempotent (edges 0→1, second run stays 1), 405/401 guards.
+`php -l` clean on all touched files. **DB left clean** — verified 0 leftover test docs/subjects, 0
+orphan tags, 0 dangling document edges (the persistent "Regression Attendee" fixture remains by
+design). Confirmed deleting a document leaves dangling edges without the DELETE fix (found + swept
+2 orphans during testing) — hence the edge cleanup added to DELETE.
+- Updated `requirements.md` (§4.4 table + graph-nodes note) and this log.
+
+---

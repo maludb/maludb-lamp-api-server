@@ -76,3 +76,32 @@ curl -s -X DELETE "https://fastapi.maludb.org/v1/documents/$DID" \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
     -H 'Accept: application/json'
 rm -f /tmp/maludb_unseeded.txt
+
+# --- POST upload with projects + subjects -> wires the graph (maludb_core 0.87.0) -
+# primary_project_id is set from the first project; each name becomes a document→subject
+# edge + soft tag (tag_object_id resolved). The document is then reachable from the graph.
+# Self-cleans the document AND the subjects it created.
+TOK='Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123'
+B='https://fastapi.maludb.org'
+printf 'graph-linked upload.\n' > /tmp/maludb_graph.txt
+RESP=$(curl -s -X POST "$B/v1/documents" -H "$TOK" \
+    -F 'file=@/tmp/maludb_graph.txt' -F 'filename=graph.txt' -F 'mime_type=text/plain' \
+    -F 'projects=Regression Project G' -F 'subjects=Regression Subject G')
+echo "$RESP"                                  # -> "primary_project_id": <id>
+DID=$(echo "$RESP" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+PID=$(echo "$RESP" | grep -o '"primary_project_id":[0-9]*' | grep -o '[0-9]*')
+
+# GET detail -> tags[] carry tag_object_type:"subject" + resolved tag_object_id
+curl -s "$B/v1/documents/$DID" -H "$TOK" -H 'Accept: application/json'
+# graph walk from the project subject -> the document appears as an object_kind:"document"
+curl -s "$B/v1/graph/walk?kind=subject&id=$PID&direction=both" -H "$TOK" -H 'Accept: application/json'
+# project detail -> documents[] lists the document
+curl -s "$B/v1/projects/$PID" -H "$TOK" -H 'Accept: application/json'
+
+# self-clean: delete the document + the two subjects it created
+curl -s -X DELETE "$B/v1/documents/$DID" -H "$TOK" -H 'Accept: application/json'
+for NAME in 'Regression%20Project%20G' 'Regression%20Subject%20G'; do
+    SID=$(curl -s "$B/v1/subjects?q=$NAME&limit=1" -H "$TOK" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+    [ -n "$SID" ] && curl -s -X DELETE "$B/v1/subjects/$SID" -H "$TOK" -H 'Accept: application/json'
+done
+rm -f /tmp/maludb_graph.txt

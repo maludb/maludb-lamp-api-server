@@ -2,12 +2,18 @@
 /**
  * /v1/documents  (requirements.md §4.4)
  *
- *   GET  ?q=&limit=   List documents (metadata + size).
- *   POST              multipart/form-data upload. Parts: file, filename, mime_type, description.
+ *   GET  ?q=&limit=   List documents (metadata + size + primary_project_id).
+ *   POST              multipart/form-data upload. Parts: file, filename, mime_type, description,
+ *                     document_type, projects, subjects (the last two comma-separated names).
  *
  * Bytes are stored in maludb_source_package.content_bytes (bytea); maludb_document holds
  * the metadata and links to the package. Both are direct-INSERT views; ids are sequence
  * assigned. Binary download is out of v1 (requirements §6) — GET returns metadata only.
+ *
+ * Documents are first-class graph nodes (maludb_core 0.87.0): each projects/subjects name is
+ * wired into the unified graph (document→subject edge + soft tag) via document_link_subject(),
+ * and primary_project_id is set from the first project. Reachable from the graph endpoints and
+ * the project/subject detail pages thereafter.
  */
 
 require_once __DIR__ . '/../../config/response.php';
@@ -32,6 +38,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
                        d.source_type,
                        d.media_type,
                        d.document_type,
+                       d.primary_project_id,
                        d.metadata_jsonb->>'description' AS description,
                        sp.content_size,
                        d.created_at
@@ -43,8 +50,9 @@ switch ($_SERVER['REQUEST_METHOD']) {
 
         $rows = db_query($sql, $params);
         foreach ($rows as &$r) {
-            $r['id']           = (int) $r['id'];
-            $r['content_size'] = $r['content_size'] === null ? null : (int) $r['content_size'];
+            $r['id']                 = (int) $r['id'];
+            $r['content_size']       = $r['content_size'] === null ? null : (int) $r['content_size'];
+            $r['primary_project_id'] = $r['primary_project_id'] === null ? null : (int) $r['primary_project_id'];
         }
         unset($r);
 
@@ -112,6 +120,39 @@ switch ($_SERVER['REQUEST_METHOD']) {
         $doc['id']           = (int) $doc['id'];
         $doc['description']  = $description;
         $doc['content_size'] = $size;
+
+        // Graph wiring (0.87.0): optional comma-separated projects/subjects → document→subject
+        // edges + soft tags; primary_project_id from the first project. Done in one tx so the
+        // graph facades resolve and partial links never persist.
+        $parse_names = static function (?string $s): array {
+            $out = [];
+            foreach (explode(',', (string) $s) as $n) { $n = trim($n); if ($n !== '') $out[$n] = $n; }
+            return array_values($out);   // de-duplicate, preserve order
+        };
+        $projects = $parse_names($_POST['projects'] ?? null);
+        $subjects = $parse_names($_POST['subjects'] ?? null);
+
+        $primary = null;
+        if ($projects || $subjects) {
+            $primary = db_tx_core(function () use ($doc, $projects, $subjects) {
+                $first = null;
+                foreach ($projects as $p) {
+                    $sid = document_link_subject($doc['id'], 'project', $p);
+                    if ($first === null && $sid !== null) $first = $sid;
+                }
+                foreach ($subjects as $s) {
+                    document_link_subject($doc['id'], 'subject', $s);
+                }
+                if ($first !== null) {
+                    db_exec(
+                        "UPDATE maludb_document SET primary_project_id = ? WHERE document_id = ? AND primary_project_id IS NULL",
+                        [$first, $doc['id']]
+                    );
+                }
+                return $first;
+            });
+        }
+        $doc['primary_project_id'] = $primary;
 
         json_response(['document' => $doc], 201);
     }

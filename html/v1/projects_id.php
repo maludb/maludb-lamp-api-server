@@ -50,6 +50,10 @@ function load_project_detail(int $id): ?array {
     $project['subjects'] = $subjects;
     $project['verbs']    = $verbs;
 
+    // Documents linked to this project through the unified graph (0.87.0). Graph facade needs
+    // maludb_core on the search_path, so this one read runs in its own db_tx_core().
+    $project['documents'] = db_tx_core(fn() => document_neighbors($id));
+
     return $project;
 }
 

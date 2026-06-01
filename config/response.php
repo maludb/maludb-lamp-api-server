@@ -401,6 +401,141 @@ function attach_attributes(array &$rows, string $view, string $pk_col): void {
 }
 
 /* ---------------------------------------------------------------------------
+ * Document ↔ graph helpers (maludb_core 0.87.0) — documents are first-class graph
+ * nodes. A project/subject/stakeholder tag on a document is mirrored as a real
+ * edge  (document) --concerns|mentions|involves--> (subject)  plus the resolved id
+ * on the soft tag row, exactly as maludb_upload_document does. All three helpers
+ * MUST run inside db_tx_core() (the graph facades resolve their malu$* tables there).
+ * ------------------------------------------------------------------------- */
+
+/** Document tag_kind → [subject_type, verb] for the three subject-like kinds; null otherwise. */
+function document_link_spec(string $tag_kind): ?array {
+    static $map = [
+        'project'     => ['project', 'concerns'],
+        'subject'     => ['concept', 'mentions'],
+        'stakeholder' => ['person',  'involves'],
+    ];
+    return $map[$tag_kind] ?? null;
+}
+
+/**
+ * Link a document to a project/subject/stakeholder by name (idempotent): resolve-or-create the
+ * subject WITHOUT clobbering an existing subject's type, create the document→subject edge, and
+ * record the resolved id on the soft tag row. Returns the subject_id (null for a blank name).
+ */
+function document_link_subject(int $document_id, string $tag_kind, string $name, string $provenance = 'provided'): ?int {
+    $name = trim($name);
+    if ($name === '') return null;
+    $spec = document_link_spec($tag_kind);
+    if ($spec === null) json_error('validation_failed', 'Unsupported document link kind "' . $tag_kind . '".', 422);
+    [$subject_type, $verb] = $spec;
+
+    // Resolve-or-create the subject. Reuse an existing one as-is (never override its type) —
+    // mirrors maludb_core._document_graph_link; register_svpor_subject() would clobber the type.
+    $row = db_one("SELECT subject_id FROM maludb_subject WHERE canonical_name = ?", [$name]);
+    $subject_id = $row !== null
+        ? (int) $row['subject_id']
+        : (int) db_one("SELECT register_svpor_subject(p_canonical_name => ?, p_subject_type => ?) AS id", [$name, $subject_type])['id'];
+
+    $verb_id = (int) db_one("SELECT maludb_core.resolve_svpor_verb(?) AS id", [$verb])['id'];
+
+    db_one(
+        "SELECT maludb_svpor_statement_create(
+                    p_subject_kind => 'document', p_subject_id => ?,
+                    p_verb_id      => ?,
+                    p_object_kind  => 'subject',  p_object_id  => ?,
+                    p_provenance   => ?) AS id",
+        [$document_id, $verb_id, $subject_id, $provenance]
+    );
+
+    // The soft tag carries the resolved object so the UI can link to the real record.
+    $tag = db_one(
+        "SELECT tag_id FROM maludb_document_tag
+          WHERE document_id = ? AND tag_kind = ? AND tag_value = ? AND provenance = ?",
+        [$document_id, $tag_kind, $name, $provenance]
+    );
+    if ($tag === null) {
+        db_exec(
+            "INSERT INTO maludb_document_tag (document_id, tag_kind, tag_value, tag_object_type, tag_object_id, provenance)
+             VALUES (?, ?, ?, 'subject', ?, ?)",
+            [$document_id, $tag_kind, $name, $subject_id, $provenance]
+        );
+    } else {
+        db_exec(
+            "UPDATE maludb_document_tag SET tag_object_type = 'subject', tag_object_id = ? WHERE tag_id = ?",
+            [$subject_id, (int) $tag['tag_id']]
+        );
+    }
+    return $subject_id;
+}
+
+/**
+ * Remove a document↔subject link by name: delete the edge, delete the soft tag row, and if the
+ * subject was the document's primary project, repoint primary_project_id to the first remaining
+ * project tag (else NULL). No-op when the link does not exist.
+ */
+function document_unlink_subject(int $document_id, string $tag_kind, string $name, string $provenance = 'provided'): void {
+    $name = trim($name);
+    if ($name === '') return;
+    $spec = document_link_spec($tag_kind);
+    if ($spec === null) json_error('validation_failed', 'Unsupported document link kind "' . $tag_kind . '".', 422);
+    [, $verb] = $spec;
+
+    $row = db_one("SELECT subject_id FROM maludb_subject WHERE canonical_name = ?", [$name]);
+    if ($row !== null) {
+        $subject_id = (int) $row['subject_id'];
+        $verb_id    = (int) db_one("SELECT maludb_core.resolve_svpor_verb(?) AS id", [$verb])['id'];
+        $stmt = db_one(
+            "SELECT statement_id FROM maludb_svpor_statement
+              WHERE subject_kind = 'document' AND subject_id = ?
+                AND object_kind  = 'subject'  AND object_id  = ? AND verb_id = ?",
+            [$document_id, $subject_id, $verb_id]
+        );
+        if ($stmt !== null) {
+            db_one("SELECT maludb_svpor_statement_delete(?) AS d", [(int) $stmt['statement_id']]);
+        }
+        // If this was the primary project, repoint to the first OTHER project tag (else NULL).
+        db_exec(
+            "UPDATE maludb_document SET primary_project_id = (
+                 SELECT t.tag_object_id FROM maludb_document_tag t
+                  WHERE t.document_id = ? AND t.tag_kind = 'project'
+                    AND t.tag_value <> ? AND t.tag_object_id IS NOT NULL
+                  ORDER BY t.tag_id LIMIT 1)
+              WHERE document_id = ? AND primary_project_id = ?",
+            [$document_id, $name, $document_id, $subject_id]
+        );
+    }
+    db_exec(
+        "DELETE FROM maludb_document_tag WHERE document_id = ? AND tag_kind = ? AND tag_value = ? AND provenance = ?",
+        [$document_id, $tag_kind, $name, $provenance]
+    );
+}
+
+/**
+ * Documents linked to a subject/project through the unified graph (concerns/mentions/involves
+ * edges). Returns [{id, title, rel}], one row per document (first rel kept). MUST run inside
+ * db_tx_core(). Powers the "documents for this project/subject" lists on detail pages.
+ */
+function document_neighbors(int $subject_id): array {
+    $rows = db_query(
+        "SELECT neighbor_id, label, rel
+           FROM maludb_graph_neighbors('subject', ?, 'both', ARRAY['concerns','mentions','involves'])
+          WHERE neighbor_kind = 'document'
+          ORDER BY neighbor_id",
+        [$subject_id]
+    );
+    $out  = [];
+    $seen = [];
+    foreach ($rows as $r) {
+        $id = (int) $r['neighbor_id'];
+        if (isset($seen[$id])) continue;
+        $seen[$id] = true;
+        $out[] = ['id' => $id, 'title' => $r['label'], 'rel' => $r['rel']];
+    }
+    return $out;
+}
+
+/* ---------------------------------------------------------------------------
  * Responses (requirements.md §1.5, §2.2, §2.3)
  * ------------------------------------------------------------------------- */
 

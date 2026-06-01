@@ -80,6 +80,10 @@ function load_subject_detail(int $id): ?array {
     }
     $subject['related_subjects'] = $related;
 
+    // Documents linked to this subject through the unified graph (0.87.0). Graph facade needs
+    // maludb_core on the search_path, so this one read runs in its own db_tx_core().
+    $subject['documents'] = db_tx_core(fn() => document_neighbors($id));
+
     return $subject;
 }
 

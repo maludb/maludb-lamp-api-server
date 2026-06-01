@@ -542,3 +542,92 @@ D6 = (a) two `.htaccess` handle rewrite rules.
 Phase 12 (attributes + templates + check) is fully spec'd, signatures confirmed, and unblocks 13/14.
 Recommend building it first as one PR, then 13, 15, 14, 16 as follow-on slices — each verified live and
 committed on its own, matching the established per-phase rhythm.
+
+---
+
+# Phase 14 — Documents as first-class graph nodes (maludb_core 0.87.0)
+
+## Context / findings (grounded against the live DB)
+- `maludb_document` view now has `primary_project_id` (currently unused by the API).
+- `maludb_document_get(id)` → jsonb `{document, tags[], svpor_hints[]}`; each tag row carries
+  `tag_object_type` / `tag_object_id`. Views `maludb_document` (updatable) and
+  `maludb_document_tag` (insertable) are plain auto-updatable views.
+- Verbs seeded: concerns=27, mentions=28, involves=29 (resolve via
+  `maludb_core.resolve_svpor_verb('concerns'|'mentions'|'involves')`).
+- Graph reach: `maludb_graph_neighbors('subject', :id, 'both')` → rows with
+  `neighbor_kind`/`neighbor_id`/`rel`/`label`; documents appear as `neighbor_kind='document'`.
+- **Discrepancy with the brief:** `documents.php` POST does *direct INSERTs* into
+  `maludb_source_package` + `maludb_document` — it does **not** call `maludb_upload_document`,
+  does **not** accept projects/subjects, and creates **no** tags/edges. `documents_id.php` is
+  GET/DELETE only (no edit path). So "upload already wires the graph" is NOT true for this API.
+
+## Plan (minimal, additive)
+
+### 1. Surface the now-populated fields (read-only)
+- [ ] `documents.php` GET list: add `primary_project_id` to the SELECT + int-cast.
+- [ ] `documents_id.php` GET detail: add `primary_project_id` (int-cast) and a `tags[]` array
+      from `maludb_document_tag` (tag_id, tag_kind, tag_value, tag_object_type, tag_object_id,
+      provenance, confidence) so the UI can link a tag to the real subject/project record.
+
+### 2. "Documents for this project/subject" listings (read, via the graph)
+- [ ] Shared helper `document_neighbors(int $id): array` in `config/response.php`:
+      `maludb_graph_neighbors('subject', :id, 'both')` filtered to `neighbor_kind='document'`
+      and `rel IN ('concerns','mentions','involves')`, returning `[id,title,rel]`. Runs in
+      `db_tx_core()`.
+- [ ] `projects_id.php` GET: add `documents[]` to the detail.
+- [ ] `subjects_id.php` GET: add `documents[]` to the detail.
+
+### 3. Maintain edges on write  (SCOPE DECISION — see check-in)
+Because the API currently provides no way to link a document to a project/subject, options:
+- (a) Accept optional `projects` / `subjects` (comma-separated form fields) on `documents.php`
+      POST and wire each: register/resolve subject (`register_svpor_subject`,
+      `p_subject_type=>'project'` for projects), create edge
+      (`maludb_svpor_statement_create('document', doc_id, verb_id, 'subject', subject_id)`),
+      write the `maludb_document_tag` row with resolved `tag_object_type/id`, and set
+      `primary_project_id` from the first project. provenance='provided'.
+- (b) Add `PATCH /v1/documents/{id}` to add/remove a project/subject link, maintaining the
+      edge (`maludb_svpor_statement_delete` on removal), the tag row, and `primary_project_id`.
+- Shared write helpers in `config/response.php`: `document_link_subject()` /
+  `document_unlink_subject()`, run inside `db_tx_core()`.
+
+### 4. Backfill / onboarding
+- [ ] Add `documents-backfill.php` (POST) → `SELECT maludb_document_graph_backfill()` in
+      `db_tx_core()`; idempotent. Surfaces the per-schema backfill as an admin action.
+
+### 5. Provenance
+- Upload/edit-created links are explicit user input → `provenance='provided'` (default).
+  No LLM-suggested links are created by these paths, so no review-flow routing needed here.
+
+### 6. Tests (self-cleaning curl files, per existing convention)
+- [ ] Upload doc with a project → primary_project_id set, tag tag_object_id resolved,
+      graph_walk('subject', X) returns the document.
+- [ ] Edit a document's project → old edge removed, new edge + primary_project_id updated.
+- [ ] Remove a project → edge gone.
+- [ ] Backfill connects a doc inserted without edges and is idempotent.
+
+## Review
+Built the full write side (upload wiring + PATCH edit), all verified live and DB left clean.
+
+**Done:**
+- [x] Shared helpers in `config/response.php`: `document_link_spec`, `document_link_subject`,
+      `document_unlink_subject`, `document_neighbors` (all run inside `db_tx_core()`). Subject
+      resolution reuses an existing subject WITHOUT clobbering its type (mirrors the DB linker;
+      `register_svpor_subject` would override). Edges `provenance='provided'`.
+- [x] `documents.php`: GET list returns `primary_project_id`; POST accepts comma-separated
+      `projects`/`subjects` and wires the graph + sets `primary_project_id` from the first project.
+- [x] `documents_id.php`: GET returns `primary_project_id` + `tags[]` (resolved
+      `tag_object_type`/`tag_object_id`); added PATCH `{link,unlink:{projects[],subjects[]}}`;
+      DELETE now also removes the document's graph edges (they don't cascade with the document).
+- [x] `projects_id.php` / `subjects_id.php`: detail GET embeds `documents[]` from the graph.
+- [x] `documents-backfill.php`: POST → `maludb_document_graph_backfill()` (idempotent).
+- [x] `.htaccess`: added the missing `/v1/graph/<op>` route so 0.86.0 traversal endpoints resolve.
+- [x] Tests: extended `documents_curls.sh` / `documents_id_curls.sh`, added
+      `documents-backfill_curls.sh` — all self-cleaning (delete doc + the subjects it created).
+
+**Notable finding:** the API upload never used `maludb_upload_document`, so none of the 0.87.0
+graph wiring happened automatically — it had to be added in API code. Also discovered that
+deleting a document cascades its soft tags but NOT its graph edges, so DELETE now sweeps them.
+
+**Out of scope / not needed:** no LLM-suggested links are created by these paths, so no
+`provenance='suggested'` review-flow routing was added (would slot into the existing
+`/v1/statements?provenance=suggested` queue if ever needed).
