@@ -605,3 +605,48 @@ and the `cfgtest` config binding persist (append-only for the executor role — 
 `php -l` clean.
 
 ---
+
+## Phase 16 — local MySQL auth/routing layer + centralized LLM layer — 2026-06-02
+
+**Prompt:** "Integrate a local mysql database into the API structure. The local database stores
+users with their auth token, role and password to connect to the Postgres database. The
+connection info in config/database.php needs DB_NAME/DB_USER/DB_PASS pulled from the local
+database based on the API key passed in. Also build an LLM layer to run extractions from text to
+create JSON objects passed into the database. Create config/local-database.php (localhost:3306,
+user/db `maludb`, password = the one in config/database.php)." Decisions (asked): MySQL
+**replaces** the Postgres api_tokens auth; **centralize** the LLM layer into config/llm.php;
+pg_password stored **plaintext** (localhost-only).
+
+**Findings:** MariaDB 10.11 reachable at localhost:3306 as maludb/maludb (pass = the Postgres
+password); pdo_mysql present; `maludb` DB empty. Postgres `api_tokens` had 1 row (user_id=3, dev
+token, expires 2036) stored as a sha256 hash — migratable by hash without the plaintext.
+
+**Actions:**
+- `config/local-database.php` (new) — `LocalDatabase` MySQL PDO singleton (localhost:3306,
+  maludb/maludb, password matching the Postgres config) + `resolveToken(hash)` →
+  {user_id, role, pg_dbname, pg_user, pg_password} (expiry-checked).
+- `config/local-database.sql` (new) — `users` schema (token_hash unique, user_id, role,
+  pg_dbname/user/password, expires_at, device_name).
+- `config/database.php` — DB_HOST/DB_PORT stay constant; name/user/pass now set per-request via
+  `Database::configure(...)` (drops any stale connection). Throws if used before configure.
+- `config/response.php` — `require_auth()` now hashes the token, resolves it via
+  `LocalDatabase::resolveToken`, calls `Database::configure(...)` with the row's Postgres creds,
+  and sets `$auth_user_id` + `$auth_role` (new `current_role()` helper). Added requires for
+  local-database.php + llm.php. Moved the LLM helpers out (see below); kept mem_vector_literal +
+  mem_resolve_token (DB-facing).
+- `config/llm.php` (new) — centralized LLM layer: `llm_chat` (provider-agnostic chat),
+  `llm_extract_json` (text→JSON), `mem_extract` (SVPO candidate_edges), `mem_embed`
+  (+deterministic fallback), `mem_embed_http`, `mem_chunk`, `mem_default_prompt`, `mem_http_post`.
+  The memory endpoints call these unchanged (functions relocated, names stable).
+- `tests/local_db_setup.php` (idempotent create+seed/migrate), `tests/local_db_auth_curls.sh`.
+
+**Verified live against https://fastapi.maludb.org:** dev token → MySQL hash lookup →
+Database::configure(zozocal creds) → `GET /v1/subjects` 200 with real data; `/v1/memory/*` still
+work (search round-trips via the relocated `mem_embed`; unconfigured model → 409); unknown /
+malformed / missing token → 401. `php -l` clean on all four config files. Setup script re-runnable.
+
+**Note:** pg_password is plaintext in the localhost MySQL store (per decision) — relies on MySQL
+being localhost-only/access-controlled. The token is stored only as a sha256 hash.
+- Updated `requirements.md` §1.4 and this log.
+
+---

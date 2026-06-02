@@ -113,16 +113,25 @@ Other query-string parameters from the client (`?q=`, `?limit=`, `?visibility=`,
 **Token format:** `malu_<43 base64url chars>` (≈32 bytes of entropy after the prefix).
 Example: `malu_pQYTIRdzGeGaoX4u-1uw3u4Ozbq61gPu5aKPbi3_Nmw`
 
-**Validation (every request):**
+**Validation (every request) — resolved against the local MySQL `users` store (Phase 16):**
 
-1. Read `Authorization: Bearer <token>` from headers. Missing/malformed → `401 auth_missing`.
+1. Read `Authorization: Bearer <token>` from headers. Missing → `401 auth_missing`; not `malu_…` → `401 auth_invalid`.
 2. Strip the `malu_` prefix. Compute `sha256` of the remainder (hex).
-3. Look up the hash in `api_tokens`:
+3. Look up the hash in the **local MySQL `users` table** (`LocalDatabase::resolveToken`):
    ```sql
-   SELECT user_id FROM api_tokens
-    WHERE token_hash = ? AND revoked_at IS NULL;
+   SELECT user_id, role, pg_dbname, pg_user, pg_password
+     FROM users
+    WHERE token_hash = ? AND (expires_at IS NULL OR expires_at > NOW());
    ```
-4. No row → `401 auth_invalid`. Found → set `$auth_user_id` in request scope, update `last_used_at` (best-effort, not gating).
+4. No row → `401 auth_invalid`. Found → `Database::configure(pg_dbname, pg_user, pg_password)` (the
+   request's Postgres connection — `DB_HOST`/`DB_PORT` stay constant in `config/database.php`),
+   set `$auth_user_id` + `$auth_role` (`current_role()`) in request scope.
+
+**Why MySQL:** the local store maps each API token to a tenant's Postgres connection + role, so
+one API can front many Postgres tenants. `config/local-database.php` holds the MySQL singleton
+(`localhost:3306`, db/user `maludb`); `config/local-database.sql` the schema;
+`tests/local_db_setup.php` creates + seeds it (migrating existing `api_tokens` hashes, so live
+tokens keep working). The Postgres password is stored as plaintext in the localhost-only store.
 
 **`api_tokens` table:**
 

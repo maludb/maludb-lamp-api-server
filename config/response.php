@@ -9,6 +9,8 @@
  */
 
 require_once __DIR__ . '/database.php';
+require_once __DIR__ . '/local-database.php';
+require_once __DIR__ . '/llm.php';
 
 /* ---------------------------------------------------------------------------
  * Config flags
@@ -547,98 +549,15 @@ function document_neighbors(int $subject_id): array {
  * search round-trips for tests; real creds (env / DB secret) switch on the HTTP path.
  * ------------------------------------------------------------------------- */
 
-// Dimension of the deterministic fallback embedding. Every embedding in a namespace must
-// share one model + dimension; keep this stable per namespace. Override via env.
-function mem_embed_dim(): int {
-    $d = (int) (getenv('MALUDB_EMBED_DIM') ?: 1536);
-    return $d > 0 ? $d : 1536;
-}
+// NOTE: the outbound model calls (chat/extract/embed), chunking, and the HTTP transport live in
+// config/llm.php (the centralized LLM layer), required above. The two helpers kept here are the
+// DB-facing glue: mem_vector_literal (SQL literal) and mem_resolve_token (Postgres secret resolve).
 
 /** Render a float array as a malu_vector literal body, e.g. "[0.1,-0.2,...]". Cast in SQL. */
 function mem_vector_literal(array $floats): string {
     // Fixed-precision, locale-independent formatting (avoid comma decimals).
     $parts = array_map(fn($f) => rtrim(rtrim(sprintf('%.8f', (float) $f), '0'), '.') ?: '0', $floats);
     return '[' . implode(',', $parts) . ']';
-}
-
-/**
- * Embed text. If a real embedding endpoint is configured (cfg['embedding_base_url'] + a
- * resolvable token), call it; otherwise return a deterministic unit vector derived from the
- * text so the same span always embeds identically (good enough to round-trip search in tests).
- * Returns a float[] of length mem_embed_dim().
- */
-function mem_embed(string $text, array $cfg = []): array {
-    $base = $cfg['embedding_base_url'] ?? (getenv('MALUDB_EMBED_BASE_URL') ?: '');
-    $tok  = $cfg['embedding_token']    ?? (getenv('MALUDB_EMBED_TOKEN') ?: '');
-    $model= $cfg['embedding_model']    ?? (getenv('MALUDB_EMBED_MODEL') ?: '');
-    if ($base !== '' && $tok !== '' && $model !== '') {
-        return mem_embed_http($text, $base, $tok, $model);   // real provider (OpenAI-shape)
-    }
-    return mem_embed_deterministic($text);
-}
-
-/** Deterministic sha256-seeded unit vector of mem_embed_dim() floats in [-1,1], L2-normalized. */
-function mem_embed_deterministic(string $text): array {
-    $dim = mem_embed_dim();
-    $vec = [];
-    $i = 0; $sum = 0.0;
-    while (count($vec) < $dim) {
-        // Stream bytes from sha256(text . ":" . counter); map each byte to [-1,1).
-        $block = hash('sha256', $text . ':' . $i, true);
-        for ($b = 0; $b < strlen($block) && count($vec) < $dim; $b++) {
-            $v = (ord($block[$b]) - 127.5) / 127.5;
-            $vec[] = $v; $sum += $v * $v;
-        }
-        $i++;
-    }
-    $norm = sqrt($sum) ?: 1.0;
-    return array_map(fn($v) => $v / $norm, $vec);
-}
-
-/** Call an OpenAI-shape embeddings endpoint (POST {input,model} → {data:[{embedding}]}). */
-function mem_embed_http(string $text, string $base, string $token, string $model): array {
-    $resp = mem_http_post(
-        rtrim($base, '/') . '/embeddings',
-        ['Authorization: Bearer ' . $token, 'Content-Type: application/json'],
-        json_encode(['input' => $text, 'model' => $model])
-    );
-    $data = json_decode($resp, true);
-    $emb  = $data['data'][0]['embedding'] ?? null;
-    if (!is_array($emb)) {
-        json_error('upstream_error', 'Embedding provider returned no vector.', 502);
-    }
-    return array_map('floatval', $emb);
-}
-
-/**
- * Split text into chunks of ~$max characters with $overlap-char overlap, preferring paragraph
- * then sentence boundaries. Chunking is the API's job (the DB does not chunk). Verbatim text is
- * preserved — each chunk's text is what gets embedded and stored as the edge source_span.
- */
-function mem_chunk(string $text, int $max = 2000, int $overlap = 200): array {
-    $text = trim($text);
-    if ($text === '') return [];
-    if (mb_strlen($text) <= $max) return [$text];
-    $chunks = [];
-    $len = mb_strlen($text);
-    $pos = 0;
-    while ($pos < $len) {
-        $slice = mb_substr($text, $pos, $max);
-        if ($pos + $max < $len) {
-            // Back up to the last paragraph/sentence/space boundary inside the slice.
-            $cut = max(
-                mb_strrpos($slice, "\n\n") ?: -1,
-                mb_strrpos($slice, '. ')   ?: -1,
-                mb_strrpos($slice, ' ')    ?: -1
-            );
-            if ($cut > $max * 0.5) { $slice = mb_substr($slice, 0, $cut + 1); }
-        }
-        $slice = trim($slice);
-        if ($slice !== '') $chunks[] = $slice;
-        $advance = max(1, mb_strlen($slice) - $overlap);
-        $pos += $advance;
-    }
-    return $chunks;
 }
 
 /** Resolve a stored secret to its plaintext (needs maludb_secret_consumer); env fallback. */
@@ -653,81 +572,6 @@ function mem_resolve_token(?string $secret_ref): ?string {
     }
     $env = getenv('MALUDB_LLM_TOKEN');
     return $env !== false && $env !== '' ? $env : null;
-}
-
-/**
- * Extract SVPO candidate edges from a chunk via the configured LLM (OpenAI-/Anthropic-shape chat).
- * Returns the decoded candidate_edges array. Requires a configured + resolvable model — callers
- * that have no creds should supply pre-extracted edges instead of calling this.
- */
-function mem_extract(string $chunk, array $cfg): array {
-    $base  = $cfg['base_url'] ?? '';
-    $token = $cfg['token'] ?? null;
-    $model = $cfg['model_identifier'] ?? '';
-    if ($base === '' || $token === null || $model === '') {
-        json_error('model_not_configured', 'No LLM model/token configured for extraction; supply "edges" in the request or configure a model.', 409);
-    }
-    $tmpl   = $cfg['prompt_template'] ?? mem_default_prompt();
-    $prompt = str_replace('{{chunk}}', $chunk, $tmpl);
-    $gen    = is_array($cfg['generation_params'] ?? null) ? $cfg['generation_params'] : [];
-
-    // OpenAI-shape chat/completions (most cloud_api adapters accept this body shape).
-    $body = array_merge([
-        'model'    => $model,
-        'messages' => [['role' => 'user', 'content' => $prompt]],
-    ], $gen);
-    $resp = mem_http_post(
-        rtrim($base, '/') . '/chat/completions',
-        ['Authorization: Bearer ' . $token, 'Content-Type: application/json'],
-        json_encode($body)
-    );
-    $data    = json_decode($resp, true);
-    $content = $data['choices'][0]['message']['content'] ?? null;
-    if (!is_string($content)) {
-        json_error('upstream_error', 'LLM returned no content.', 502);
-    }
-    $parsed = json_decode($content, true);
-    $edges  = $parsed['candidate_edges'] ?? null;
-    if (!is_array($edges)) {
-        json_error('upstream_error', 'LLM output was not the candidate_edges contract.', 502);
-    }
-    return $edges;
-}
-
-/** Built-in extraction prompt (used when no template is configured). Must contain {{chunk}}. */
-function mem_default_prompt(): string {
-    return "Extract Subject-Verb-Predicate-Object edges from the text. Use SMALL canonical verbs "
-         . "(e.g. \"upgrade\", not \"performed_upgrade\"); put status/timing/role/detail into the "
-         . "predicate array as edge-attributes (value_text / value_timestamp / value_numeric). "
-         . "Prefer subject_type in person|software|project|other. Return ONLY JSON of the form "
-         . "{\"candidate_edges\":[{\"subject_text\":\"\",\"subject_type\":\"\",\"verb_text\":\"\","
-         . "\"predicate\":[{\"attr_name\":\"\",\"value_text\":\"\"}],\"source_span\":\"\",\"confidence\":0.0}]}.\n\n"
-         . "Text:\n{{chunk}}";
-}
-
-/** Minimal JSON POST over cURL with a hard timeout. Returns the response body; maps transport errors. */
-function mem_http_post(string $url, array $headers, string $json): string {
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_POST           => true,
-        CURLOPT_HTTPHEADER     => $headers,
-        CURLOPT_POSTFIELDS     => $json,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT        => (int) (getenv('MALUDB_HTTP_TIMEOUT') ?: 60),
-        CURLOPT_CONNECTTIMEOUT => 10,
-    ]);
-    $body = curl_exec($ch);
-    if ($body === false) {
-        $err = curl_error($ch);
-        curl_close($ch);
-        json_error('upstream_error', 'Model HTTP call failed: ' . $err, 502);
-    }
-    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    if ($code >= 400) {
-        json_error('upstream_error', 'Model endpoint returned HTTP ' . $code . '.', 502);
-    }
-    return (string) $body;
 }
 
 /**
@@ -790,9 +634,17 @@ function body_json(): array {
 }
 
 /* ---------------------------------------------------------------------------
- * Auth (requirements.md §1.4) — adapted to the live api_tokens schema
- * (validates against expires_at; the spec's revoked_at column does not exist).
+ * Auth (requirements.md §1.4) — resolved against the local MySQL `users` store.
+ * The presented bearer token is hashed (sha256 of the part after `malu_`) and looked up in
+ * MySQL; the matching row carries the user's role and the Postgres connection (DB_NAME/USER/
+ * PASS) this request connects with. require_auth() configures Database with those creds before
+ * any Postgres query runs. (Replaces the former Postgres api_tokens lookup.)
  * ------------------------------------------------------------------------- */
+
+/** Role attached to the authenticated token (set by require_auth); null before auth. */
+function current_role(): ?string {
+    return $GLOBALS['__auth_role'] ?? null;
+}
 
 function bearer_token(): ?string {
     $hdr = null;
@@ -819,14 +671,14 @@ function require_auth(): int {
         json_error('auth_invalid', 'Malformed API token.', 401);
     }
     $hash = hash('sha256', substr($token, strlen('malu_')));
-    $row  = db_one(
-        'SELECT user_id FROM api_tokens WHERE token_hash = ? AND expires_at > now()',
-        [$hash]
-    );
+    $row  = LocalDatabase::resolveToken($hash);
     if ($row === null) {
         json_error('auth_invalid', 'Invalid or expired API token.', 401);
     }
-    return $GLOBALS['__auth_user_id'] = (int)$row['user_id'];
+    // Point the Postgres connection at this token's tenant database before any query runs.
+    Database::configure((string) $row['pg_dbname'], (string) $row['pg_user'], (string) $row['pg_password']);
+    $GLOBALS['__auth_role'] = $row['role'];
+    return $GLOBALS['__auth_user_id'] = (int) $row['user_id'];
 }
 
 /* ---------------------------------------------------------------------------

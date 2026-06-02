@@ -710,3 +710,59 @@ superuser GC.
 
 **Out of scope:** async queue path (`request_extraction`/`harvest_extractions`) — exists but no
 worker daemon, so the inline worker pattern is used per the prompt's default.
+
+---
+
+# Phase 16 — local MySQL auth/routing layer + LLM extraction layer
+
+## Findings (verified)
+- MySQL/MariaDB 10.11 reachable at localhost:3306 as `maludb`/`maludb` (pass = the
+  config/database.php password); `pdo_mysql` present; the `maludb` DB is **empty** (no tables).
+- Postgres `api_tokens` has 1 row (user_id=3, the dev token, expires 2036) stored as a sha256
+  `token_hash` (no plaintext). Migrate by hash → nothing breaks.
+- Only DB_NAME/DB_USER/DB_PASS move to MySQL; DB_HOST (192.168.100.163) / DB_PORT stay constant.
+
+## Plan
+1. `config/local-database.php` — `LocalDatabase` MySQL PDO singleton (localhost:3306, maludb/
+   maludb, password reused from the Postgres config). One place for MySQL connectivity.
+2. MySQL `users` table (create + seed):
+   - `id`, `token_hash` (unique, sha256 of token after the `malu_` prefix), `user_id`,
+     `role`, `pg_dbname`, `pg_user`, `pg_password`, `expires_at`, `device_name`, `created_at`.
+   - Seed: migrate the existing Postgres `api_tokens` row (hash + user_id + expiry) with the
+     current zozocal Postgres creds + a role, so the live dev token keeps authenticating.
+3. `config/database.php` — keep DB_HOST/DB_PORT constants; make name/user/pass dynamic via
+   `Database::configure($dbname,$user,$pass)` set before the first Postgres connection.
+4. `config/response.php` — `require_auth()` resolves the bearer token against MySQL (hash lookup,
+   expiry check) → configures `Database` with the row's Postgres creds → sets user_id + role →
+   returns user_id. (Replaces the Postgres `api_tokens` lookup.)
+5. LLM layer — `config/llm.php`: a reusable extraction layer (text → JSON) the memory pipeline
+   (and future callers) use; centralizes the Phase-15 `mem_extract`/HTTP plumbing + real creds.
+6. Tests: MySQL connectivity + token→creds resolution; auth still works for the dev token;
+   an extraction round-trip.
+
+## Decisions (answered)
+- MySQL **replaces** the Postgres api_tokens auth (single source; existing hash migrated).
+- LLM layer: **centralize** the Phase-15 extraction/HTTP/embed plumbing into `config/llm.php`.
+- pg_password: **plaintext** in the localhost-only MySQL store.
+
+## Review
+Wired the local MySQL auth/routing layer and centralized the LLM layer; verified live; live dev
+token keeps working.
+
+**Done:**
+- [x] `config/local-database.php` (`LocalDatabase` MySQL singleton + `resolveToken`),
+      `config/local-database.sql` (`users` schema).
+- [x] `config/database.php`: DB_HOST/DB_PORT constant; name/user/pass via `Database::configure()`
+      set per-request by `require_auth()`.
+- [x] `config/response.php`: `require_auth()` resolves the token against MySQL → configures the
+      Postgres connection → sets user_id + role (`current_role()`); requires local-database.php + llm.php.
+- [x] `config/llm.php`: centralized `llm_chat`/`llm_extract_json`/`mem_extract`/`mem_embed`/
+      `mem_chunk`/`mem_http_post` (moved from response.php; endpoints unchanged).
+- [x] `tests/local_db_setup.php` (idempotent create + migrate api_tokens), `tests/local_db_auth_curls.sh`.
+
+**Verified live:** dev token → MySQL → Postgres → `GET /v1/subjects` 200 real data; memory
+endpoints still work (relocated `mem_embed`/`mem_extract`); unknown/malformed/missing token → 401.
+
+**Notes / security:** pg_password is plaintext in the localhost MySQL store (per decision); token
+stored as sha256 hash only. Each API token can map to a different tenant Postgres DB — multi-tenant
+fan-out from one API. To onboard a new tenant: insert a `users` row (token_hash + pg creds + role).
