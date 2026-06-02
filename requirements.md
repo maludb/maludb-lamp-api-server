@@ -487,14 +487,17 @@ embedding in a namespace must share one model + dimension.
 | `/v1/memory/documents` | `memory_documents.php` | POST | Upload → chunk (in code) → extract (LLM, or caller-supplied `edges`) → embed → one tx: `maludb_upload_document` then `maludb_memory_ingest_edge` per edge. Edges default `provenance='suggested'`. |
 | `/v1/memory/search` | `memory_search.php` | POST | Embed the query (same model) → `maludb_memory_search(...)`. A `subject` and/or `verb` is required (compartment pre-filter before the ANN). |
 
-> **Deployment privilege notes (verified against `zozocal`).** Provider kind ∈
+> **Deployment privilege notes (verified against `zozocal`, maludb_core 0.91.0).** Provider kind ∈
 > `{cloud_api, local_http, local_socket, local_runtime, shell_adapter, stub}` (NOT
-> 'anthropic'/'openai'). `register_model_provider`/`register_model_alias` and `__secret_resolve`
-> are owner-restricted — `/v1/memory/config` POST returns **403** until the API role is granted
-> `maludb_llm_model_admin` (provider/alias) and `maludb_secret_consumer` (DB-resolved token).
-> `set_model_config`/`model_config`/`ingest_edge`/`search`/`secret_set` work as `maludb_memory_executor`+`reader`.
-> The graph-bound vector store is **append-only** for the executor role: `malu$vector_chunk` and
-> `tombstone_vector_chunk` are owner-only, so ingested chunks can be GC'd only by a superuser.
+> 'anthropic'/'openai'). Registration uses the **per-tenant self-service facades** added in 0.91.0
+> — schema-local `maludb_register_model_provider` / `maludb_register_model_alias` (SECURITY
+> DEFINER, granted to `maludb_memory_executor` by `enable_memory_schema`) — so the full config
+> flow works for the API role with **no global model-admin grant**, and `__secret_resolve`
+> (DB-resolved token) works too. (Do NOT call the global owner-only `maludb_core.register_model_*`.)
+> `set_model_config`/`model_config`/`ingest_edge`/`search`/`secret_set` also work as
+> `maludb_memory_executor`+`reader`. **Append-only for the executor role:** there are no delete
+> facades for vector chunks (`malu$vector_chunk`/`tombstone_vector_chunk` are owner-only) or for
+> providers/aliases/config bindings — only `secret_revoke` exists; GC of the rest needs a superuser.
 >
 > **No-creds path:** `mem_embed()` falls back to a deterministic local embedding and the process
 > endpoint accepts pre-extracted `edges`, so upload→ingest→search round-trips without live models.

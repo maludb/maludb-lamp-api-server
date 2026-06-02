@@ -13,10 +13,11 @@
  *        + prompt + embedding model + defaults (maludb_memory_set_model_config). Returns the
  *        read-back config. The whole sequence runs in one db_tx_core() transaction.
  *
- * NOTE: register_model_provider/alias are owner-restricted in some deployments — the API role
- * must hold the model-admin grant (maludb_llm_model_admin) or these return 403. The token is
- * never inlined into provider/alias rows or logs; it is stored via secret_set and referenced by
- * name. Body shape:
+ * Uses the per-tenant self-service facades (maludb_core 0.91.0): the schema-local
+ * maludb_register_model_provider / maludb_register_model_alias (SECURITY DEFINER, granted to
+ * maludb_memory_executor) register into the current schema — no global model-admin grant needed.
+ * The token is never inlined into provider/alias rows or logs; it is stored via secret_set and
+ * referenced by name. Body shape:
  *   { namespace, secret_name, token?, provider:{name,kind,adapter_name?,data_sensitivity?},
  *     alias:{name,model_identifier,context_length?,base_url}, prompt_template?, embedding_model,
  *     generation_params?, default_subject_type?, default_provenance? }
@@ -87,16 +88,16 @@ switch ($_SERVER['REQUEST_METHOD']) {
                     [2]   // redact the token (2nd param)
                 );
             }
-            // 2. register the provider (secret referenced by name, never inlined).
+            // 2. register the provider (per-tenant self-service facade; secret by name, never inlined).
             db_one(
-                "SELECT maludb_core.register_model_provider(
+                "SELECT maludb_register_model_provider(
                             p_name => ?, p_kind => ?, p_adapter_name => ?,
                             p_secret_ref => ?, p_data_sensitivity => ?) AS id",
                 [$prov_name, $prov_kind, $prov_adapter, $secret_name, $prov_sens]
             );
-            // 3. register the alias (base_url rides in runtime_params).
+            // 3. register the alias (per-tenant facade; base_url rides in runtime_params).
             db_one(
-                "SELECT maludb_core.register_model_alias(
+                "SELECT maludb_register_model_alias(
                             p_alias => ?, p_provider => ?, p_model_identifier => ?,
                             p_context_length => ?, p_runtime_params => jsonb_build_object('base_url', ?::text)) AS id",
                 [$alias_name, $prov_name, $alias_model, $alias_ctx, $base_url]

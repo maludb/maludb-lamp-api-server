@@ -694,11 +694,16 @@ the append-only vector store.
 round-trips at similarity ≈ 1.0; all validation/guard cases; config POST → 403 (expected until
 grant). Cleanup removed test docs/edges/subjects.
 
-**Blockers surfaced (need a DBA grant — chosen decision was "grant elevated rights"):**
-- `GRANT maludb_llm_model_admin TO zozocal;` — for register_model_provider/alias (config POST 403 until then).
-- `GRANT maludb_secret_consumer TO zozocal;` — for `__secret_resolve` (DB-resolved LLM token).
-- `malu$vector_chunk`/`tombstone_vector_chunk` are owner-only → vector store is append-only for
-  our role; smoke-test chunks in `apismoke` need superuser GC. Flagged; not a code bug.
+**Privilege resolution (15.1):** instead of granting global admin roles, maludb_core 0.91.0 adds
+per-tenant **self-service** facades (`maludb_register_model_provider`/`maludb_register_model_alias`,
+granted to `maludb_memory_executor` by `enable_memory_schema`). `memory_config.php` now calls
+those (not the global owner-only `maludb_core.register_model_*`); `__secret_resolve` also works for
+the executor role. `POST /v1/memory/config` verified → 200 + read-back. No DBA grant needed.
+
+**Append-only for the executor role (not code bugs):** no delete facade for vector chunks
+(`malu$vector_chunk`/`tombstone_vector_chunk` owner-only), providers, aliases, or config bindings —
+only `secret_revoke` exists. Test residue (apismoke chunks; cfgtest provider/alias/config) needs
+superuser GC.
 
 **Live model creds (env on the API host) for real extraction/embedding:** `MALUDB_LLM_TOKEN`,
 `MALUDB_EMBED_BASE_URL`, `MALUDB_EMBED_TOKEN`, `MALUDB_EMBED_MODEL`, `MALUDB_EMBED_DIM`.

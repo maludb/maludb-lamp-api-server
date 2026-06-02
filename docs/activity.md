@@ -571,3 +571,37 @@ MALUDB_EMBED_BASE_URL / MALUDB_EMBED_TOKEN / MALUDB_EMBED_MODEL / MALUDB_EMBED_D
 - Updated `requirements.md` (new §4.13) and this log.
 
 ---
+
+## Phase 15.1 — wire group-1 config to the 0.91.0 per-tenant self-service facades — 2026-06-02
+
+**Prompt:** "We changed the enable memory function in the schema to grant the required
+permissions so the administrator does not need to get involved with the creation of each role
+and schema." (Re-verify and finish the config flow.)
+
+**Finding:** maludb_core 0.91.0 (schema re-enabled 2026-06-02) adds per-tenant **self-service**
+registration: schema-local `maludb_register_model_provider` / `maludb_register_model_alias`
+(SECURITY DEFINER wrappers over `_register_*_for_schema`, granted to `maludb_memory_executor` by
+`enable_memory_schema` via `_enable_memory_schema_0910_facade`) + read views
+`maludb_model_provider`/`maludb_model_alias`. The global `maludb_core.register_model_*` remain
+owner-only. `__secret_resolve` now also works for the executor role. So NO global model-admin /
+secret-consumer grant is needed after all — the earlier blocker is resolved by the self-service
+facades. Verified the full chain (secret_set → register provider → register alias →
+set_model_config → model_config read-back → __secret_resolve) live in a rolled-back tx.
+
+**Actions:**
+- `memory_config.php` — switched the two registration calls from the global owner-only
+  `maludb_core.register_model_provider`/`register_model_alias` to the schema-local
+  `maludb_register_model_provider`/`maludb_register_model_alias` (resolved via search_path);
+  updated the header note. `mem_resolve_token` already uses `maludb_core.__secret_resolve` (now works).
+- `tests/memory_config_curls.sh` — POST now expects 200 (self-service), uses a throwaway
+  `cfgtest` namespace + names; documents that provider/alias/config rows are append-only and the
+  secret is revocable via `maludb_core.secret_revoke`.
+- `requirements.md` §4.13 privilege note rewritten for the 0.91.0 self-service model.
+
+**Verified live:** `POST /v1/memory/config` → 200 with full read-back (secret_ref = the NAME,
+never the token); `GET` round-trips. Revoked the test secret (`secret_revoke`) and confirmed
+`__secret_resolve` then fails. **Residue:** provider `zz_apitest_prov`, alias `zz_apitest_ext`,
+and the `cfgtest` config binding persist (append-only for the executor role — superuser to remove).
+`php -l` clean.
+
+---
