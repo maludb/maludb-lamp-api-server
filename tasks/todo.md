@@ -767,6 +767,51 @@ endpoints still work (relocated `mem_embed`/`mem_extract`); unknown/malformed/mi
 stored as sha256 hash only. Each API token can map to a different tenant Postgres DB — multi-tenant
 fan-out from one API. To onboard a new tenant: insert a `users` row (token_hash + pg creds + role).
 
+# Phase 17 — text → memory ingestion endpoint (per-model prompt, OpenAI + Anthropic)
+
+## Inputs (per the request)
+- `text` (required), `model` (optional, default `chatgpt-4o`), `hints` (optional context).
+- System prompt is stored in MySQL **per model** (prompts differ per model). User will provide it.
+- Before the LLM call, inject: existing verbs, verb types, existing subjects, subject types.
+
+## Data sources (verified facades, queryable without db_tx_core)
+- verbs: `maludb_verb` (canonical_name, verb_type); verb types: `maludb_verb_type` (verb_type, display_name).
+- subjects: `maludb_subject` (canonical_name, subject_type); subject types: `maludb_subject_type` (subject_type).
+
+## Plan
+1. MySQL `model_prompts` table: model_name (PK), api_format ('openai'|'anthropic'), system_prompt
+   (with placeholders {{verbs}} {{verb_types}} {{subjects}} {{subject_types}} {{hints}}), base_url,
+   max_tokens, updated_at. Seed the default `chatgpt-4o` (openai) row with the provided prompt.
+2. `config/llm.php`: add Anthropic format (`POST {base}/v1/messages`, x-api-key + anthropic-version,
+   `{model,system,max_tokens,messages:[{role:user}]}` → content[0].text) and a dispatcher
+   `llm_complete($cfg, $system, $user)` that branches on api_format. Keep OpenAI path.
+3. `config/local-database.php`: `modelPrompt($model)` → {api_format, system_prompt, base_url, max_tokens}.
+4. `html/v1/memory_ingest.php` (`POST /v1/memory/ingest`): require_auth → load prompt row for model
+   → gather verb/subject/type lists from Postgres → fill placeholders + hints → call the LLM in the
+   right format → parse candidate_edges → ingest (upload_document + embed + maludb_memory_ingest_edge,
+   provenance 'suggested') → return {document_id, edges}. .htaccess already routes /v1/memory/<op>.
+5. Test file (deterministic where possible).
+
+## Decisions (answered)
+- LLM creds (base_url + api_key) live in **MySQL `model_prompts` columns** (per model).
+- Endpoint does **full ingest** (upload doc + embed + ingest_edge, provenance 'suggested').
+- Prompts managed via **SQL seed + a setter endpoint** (`/v1/model-prompts`, pg-login authorized).
+
+## Review (done)
+- `model_prompts` table (model_name, api_format, system_prompt, base_url, api_key, max_tokens);
+  seeded a default `chatgpt-4o` (openai) row; `LocalDatabase::modelPrompt()`.
+- `config/llm.php`: `llm_complete` dispatches openai (`/chat/completions`, system+user) vs anthropic
+  (`/v1/messages`, x-api-key + top-level system); `llm_json_from_text` tolerant parser.
+- `memory_ingest.php` (`POST /v1/memory/ingest`): load prompt → inject verbs/verb_types/subjects/
+  subject_types + hints → LLM (by api_format) → candidate_edges → upload_document + ingest_edge.
+  `preview:true` returns the filled prompt without calling the model or writing.
+- `model-prompts.php` (`GET`/`POST`): upsert/list per-model prompts (pg-login auth; api_key masked).
+- Verified live: preview injects 9 verbs/30 verb_types/4 subjects/13 subject_types; 409 no-key,
+  422 unknown model, 400/405/401 guards; setter upsert (openai+anthropic) + dual-format preview;
+  bad pg pw → 403. DB clean (default row kept). **TODO from user:** real prompt + api_key via setter.
+
+---
+
 ### Phase 16.1 — token issuance/list/revoke (done)
 - `POST /v1/tokens` mint (returns plaintext token once), `GET /v1/tokens` list (metadata only),
   `DELETE /v1/tokens/{id}` revoke. Authorization = the Postgres login itself

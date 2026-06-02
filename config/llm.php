@@ -171,6 +171,91 @@ function mem_extract(string $chunk, array $cfg): array {
     return $edges;
 }
 
+/**
+ * Provider-agnostic system+user completion, dispatched by $cfg['api_format'] ('openai' |
+ * 'anthropic'). $cfg needs: api_format, base_url, model_identifier, token; optional max_tokens,
+ * generation_params. Returns the assistant text. Used by /v1/memory/ingest (per-model prompts).
+ */
+function llm_complete(array $cfg, string $system, string $user): string {
+    $fmt = strtolower((string) ($cfg['api_format'] ?? 'openai'));
+    return $fmt === 'anthropic'
+        ? llm_complete_anthropic($cfg, $system, $user)
+        : llm_complete_openai($cfg, $system, $user);
+}
+
+/** OpenAI chat/completions with a system + user message. base_url e.g. https://api.openai.com/v1 */
+function llm_complete_openai(array $cfg, string $system, string $user): string {
+    $base = $cfg['base_url'] ?? ''; $token = $cfg['token'] ?? null; $model = $cfg['model_identifier'] ?? '';
+    if ($base === '' || $token === null || $token === '' || $model === '') {
+        json_error('model_not_configured', 'OpenAI base_url/api_key/model not configured.', 409);
+    }
+    $gen  = is_array($cfg['generation_params'] ?? null) ? $cfg['generation_params'] : [];
+    $body = array_merge([
+        'model'    => $model,
+        'messages' => [
+            ['role' => 'system', 'content' => $system],
+            ['role' => 'user',   'content' => $user],
+        ],
+    ], $gen);
+    $resp = mem_http_post(
+        rtrim($base, '/') . '/chat/completions',
+        ['Authorization: Bearer ' . $token, 'Content-Type: application/json'],
+        json_encode($body)
+    );
+    $data    = json_decode($resp, true);
+    $content = $data['choices'][0]['message']['content'] ?? null;
+    if (!is_string($content)) json_error('upstream_error', 'OpenAI returned no content.', 502);
+    return $content;
+}
+
+/** Anthropic messages API. base_url e.g. https://api.anthropic.com ; system is a top-level field. */
+function llm_complete_anthropic(array $cfg, string $system, string $user): string {
+    $base = $cfg['base_url'] ?? ''; $token = $cfg['token'] ?? null; $model = $cfg['model_identifier'] ?? '';
+    if ($base === '' || $token === null || $token === '' || $model === '') {
+        json_error('model_not_configured', 'Anthropic base_url/api_key/model not configured.', 409);
+    }
+    $body = [
+        'model'      => $model,
+        'max_tokens' => (int) ($cfg['max_tokens'] ?? 2048),
+        'system'     => $system,
+        'messages'   => [['role' => 'user', 'content' => $user]],
+    ];
+    if (is_array($cfg['generation_params'] ?? null)) $body = array_merge($body, $cfg['generation_params']);
+    $resp = mem_http_post(
+        rtrim($base, '/') . '/v1/messages',
+        ['x-api-key: ' . $token, 'anthropic-version: 2023-06-01', 'Content-Type: application/json'],
+        json_encode($body)
+    );
+    $data = json_decode($resp, true);
+    // content is an array of blocks; concatenate the text blocks.
+    $text = '';
+    foreach (($data['content'] ?? []) as $block) {
+        if (($block['type'] ?? '') === 'text' && isset($block['text'])) $text .= $block['text'];
+    }
+    if ($text === '') json_error('upstream_error', 'Anthropic returned no text content.', 502);
+    return $text;
+}
+
+/**
+ * Decode a JSON object from an LLM response that may wrap it in prose or a ```json fence.
+ * Tries a straight decode, then a fenced block, then the first {...} span. Returns array or null.
+ */
+function llm_json_from_text(string $content): ?array {
+    $try = json_decode(trim($content), true);
+    if (is_array($try)) return $try;
+    if (preg_match('/```(?:json)?\s*(\{.*\})\s*```/s', $content, $m)) {
+        $try = json_decode($m[1], true);
+        if (is_array($try)) return $try;
+    }
+    $start = strpos($content, '{');
+    $end   = strrpos($content, '}');
+    if ($start !== false && $end !== false && $end > $start) {
+        $try = json_decode(substr($content, $start, $end - $start + 1), true);
+        if (is_array($try)) return $try;
+    }
+    return null;
+}
+
 /** Built-in extraction prompt (used when no template is configured). Must contain {{chunk}}. */
 function mem_default_prompt(): string {
     return "Extract Subject-Verb-Predicate-Object edges from the text. Use SMALL canonical verbs "

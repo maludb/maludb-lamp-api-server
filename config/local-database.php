@@ -69,6 +69,20 @@ class LocalDatabase {
         return $row === false ? null : $row;
     }
 
+    /**
+     * Load the per-model extraction prompt + LLM connection, or null if the model has no row.
+     * Returns ['model_name','api_format','system_prompt','base_url','api_key','max_tokens'].
+     */
+    public static function modelPrompt(string $model): ?array {
+        $stmt = self::getInstance()->getConnection()->prepare(
+            "SELECT model_name, api_format, system_prompt, base_url, api_key, max_tokens
+               FROM model_prompts WHERE model_name = ? LIMIT 1"
+        );
+        $stmt->execute([$model]);
+        $row = $stmt->fetch();
+        return $row === false ? null : $row;
+    }
+
     /** Next app user_id to assign when a token-create request doesn't supply one. */
     public static function nextUserId(): int {
         $n = self::getInstance()->getConnection()->query("SELECT COALESCE(MAX(user_id), 0) + 1 AS n FROM users")->fetchColumn();

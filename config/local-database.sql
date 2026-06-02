@@ -19,3 +19,18 @@ CREATE TABLE IF NOT EXISTS users (
     created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_users_token_hash (token_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Per-model extraction prompts + LLM connection. The system prompt may differ slightly per model;
+-- api_format selects the request shape (OpenAI chat vs Anthropic messages). The prompt contains
+-- placeholders the /v1/memory/ingest endpoint fills before sending: {{verbs}}, {{verb_types}},
+-- {{subjects}}, {{subject_types}}, {{hints}}. base_url + api_key are the LLM connection.
+CREATE TABLE IF NOT EXISTS model_prompts (
+    model_name    VARCHAR(128) PRIMARY KEY,
+    api_format    VARCHAR(16)  NOT NULL DEFAULT 'openai',   -- 'openai' | 'anthropic'
+    system_prompt MEDIUMTEXT   NOT NULL,
+    base_url      VARCHAR(255) NOT NULL,
+    api_key       VARCHAR(255) NULL,
+    max_tokens    INT          NOT NULL DEFAULT 2048,
+    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

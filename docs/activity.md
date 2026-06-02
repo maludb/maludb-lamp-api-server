@@ -699,3 +699,44 @@ with a bad pg_dbname (valid pw) → 503 tenant_db_unavailable; dev token unaffec
 left clean. `php -l` clean. Updated requirements.md §1.4 + this log.
 
 ---
+
+## Phase 17 — text → memory ingestion endpoint (per-model prompt, OpenAI + Anthropic) — 2026-06-02
+
+**Prompt:** new endpoint to ingest text into the memory DB. System prompt stored in MySQL
+(per-model, since prompts vary by model); support both Anthropic and OpenAI API formats; inputs =
+text (req), optional model (default `chatgpt-4o`), optional hints; inject the existing verbs, verb
+types, subjects, and subject types into the extraction prompt before sending to the LLM. Decisions
+(asked): LLM creds in **MySQL `model_prompts` columns**; **full ingest** into memory; **seed via
+SQL + a setter endpoint** (pg-login authorized).
+
+**Actions:**
+- `config/local-database.sql` + `tests/local_db_setup.php` — new `model_prompts` table (model_name
+  PK, api_format, system_prompt, base_url, api_key, max_tokens) + idempotent create; seed a default
+  `chatgpt-4o` (openai) row via INSERT IGNORE (placeholder prompt with the injection placeholders).
+- `config/local-database.php` — `LocalDatabase::modelPrompt($model)`.
+- `config/llm.php` — Anthropic format support + dispatcher: `llm_complete($cfg,$system,$user)` →
+  `llm_complete_openai` (chat/completions, system+user) or `llm_complete_anthropic`
+  (`/v1/messages`, x-api-key + anthropic-version, top-level system); `llm_json_from_text` (tolerant
+  JSON extraction from prose/fenced output).
+- `html/v1/memory_ingest.php` (`POST /v1/memory/ingest`) — require_auth → load model prompt from
+  MySQL → gather verbs/verb_types/subjects/subject_types from Postgres → fill placeholders
+  ({{verbs}}/{{verb_types}}/{{subjects}}/{{subject_types}}/{{hints}}/{{text}}) → call the LLM in its
+  api_format → parse candidate_edges → one tx: `maludb_upload_document` + `maludb_memory_ingest_edge`
+  per edge (provenance 'suggested'). `preview:true` returns the assembled prompt without calling the
+  model or writing (testable without creds; lets the prompt be inspected).
+- `html/v1/model-prompts.php` (`GET`/`POST /v1/model-prompts`) — upsert/list per-model prompts;
+  authorized by the Postgres login (like /v1/tokens); api_key never returned (only api_key_set).
+
+**Verified live against https://fastapi.maludb.org:** preview assembled the prompt with 9 verbs /
+30 verb types / 4 subjects / 13 subject types injected; default model w/o key → 409
+model_api_key_missing; unknown model → 422; missing text → 400; 405/401 guards. Setter: GET lists
+(key masked), POST upsert of an Anthropic model → 200 (api_key_set), preview with it → api_format
+anthropic (dual-format dispatch wired); invalid api_format → 422; bad pg password → 403. Cleaned up
+the test model; MySQL left with the default `chatgpt-4o` row; no Postgres residue (only preview/error
+paths ran). `php -l` clean on all files.
+
+**Still needed from the user:** the real system prompt text + the model's `api_key` — install both
+via `POST /v1/model-prompts` (the seeded default is a placeholder).
+- Updated `requirements.md` §4.13 and this log.
+
+---

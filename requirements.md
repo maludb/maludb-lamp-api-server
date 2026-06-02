@@ -511,6 +511,15 @@ embedding in a namespace must share one model + dimension.
 | `/v1/memory/config` | `memory_config.php` | GET, POST, PUT | GET → `maludb_memory_model_config(namespace)`. POST/PUT: `secret_set` (token encrypted, redacted from logs) + `register_model_provider` + `register_model_alias` + `maludb_memory_set_model_config`, then read-back. |
 | `/v1/memory/documents` | `memory_documents.php` | POST | Upload → chunk (in code) → extract (LLM, or caller-supplied `edges`) → embed → one tx: `maludb_upload_document` then `maludb_memory_ingest_edge` per edge. Edges default `provenance='suggested'`. |
 | `/v1/memory/search` | `memory_search.php` | POST | Embed the query (same model) → `maludb_memory_search(...)`. A `subject` and/or `verb` is required (compartment pre-filter before the ANN). |
+| `/v1/memory/ingest` | `memory_ingest.php` | POST | `{text, model?='chatgpt-4o', hints?, namespace?, preview?}`. Loads the model's system prompt + LLM connection from MySQL `model_prompts`, injects the existing verbs / verb types / subjects / subject types (placeholders `{{verbs}}`/`{{verb_types}}`/`{{subjects}}`/`{{subject_types}}`/`{{hints}}`), calls the LLM in its `api_format` (**openai** or **anthropic**), parses `candidate_edges`, then uploads the text + ingests each edge (`provenance='suggested'`). `preview:true` returns the assembled prompt without calling the model or writing. |
+| `/v1/model-prompts` | `model-prompts.php` | GET, POST | Manage the per-model prompts (MySQL `model_prompts`: model_name, api_format, system_prompt, base_url, api_key, max_tokens). POST upserts; GET lists (api_key never returned, only `api_key_set`). Authorized by the Postgres login (like `/v1/tokens`). |
+
+The `model_prompts` MySQL table stores one row per model — the system prompt may differ per model,
+and `api_format` selects the request shape (OpenAI chat/completions with a system+user message, vs
+Anthropic `/v1/messages` with a top-level `system`). `base_url` + `api_key` are the per-model LLM
+connection. `tests/local_db_setup.php` seeds a default `chatgpt-4o` (openai) row; replace its prompt
+and set its `api_key` via `POST /v1/model-prompts`. Anthropic and OpenAI request/response shapes both
+live in `config/llm.php` (`llm_complete` dispatches on `api_format`).
 
 > **Deployment privilege notes (verified against `zozocal`, maludb_core 0.91.0).** Provider kind ∈
 > `{cloud_api, local_http, local_socket, local_runtime, shell_adapter, stub}` (NOT
