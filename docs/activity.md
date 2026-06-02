@@ -650,3 +650,33 @@ being localhost-only/access-controlled. The token is stored only as a sha256 has
 - Updated `requirements.md` §1.4 and this log.
 
 ---
+
+## Phase 16.1 — token issuance/list/revoke endpoints — 2026-06-02
+
+**Prompt:** "I need an endpoint for generating the token and storing the data in the database."
+Decision (asked): authorization is the Postgres login itself — "if they know the password to
+connect to the database, they should be able to create the token"; scope = create + list + revoke.
+
+**Actions:**
+- `config/database.php` — added `Database::testCredentials($db,$user,$pass)`: verifies a Postgres
+  login by connecting (fixed host/port, 5s timeout). This is the authorization primitive.
+- `config/local-database.php` — added `LocalDatabase::nextUserId()`.
+- `config/local-database.sql` + `tests/local_db_setup.php` — added a `token_prefix` column
+  (idempotent `ALTER ... ADD COLUMN IF NOT EXISTS`) for safe listing.
+- `html/v1/tokens.php` — POST (verify pg creds → mint `malu_<base64url(32)>` → store users row
+  with sha256 hash + 8-char prefix → return plaintext token ONCE) and GET (list tokens for the
+  authenticated connection; metadata only — never the token value or pg_password).
+- `html/v1/tokens_id.php` — DELETE (verify pg creds; the token must belong to that connection →
+  delete). Routes via the existing 1-seg/2-seg .htaccess rules.
+- `tests/tokens_curls.sh` — self-cleaning (create → authenticate → list → revoke + negative cases).
+
+**Verified live against https://fastapi.maludb.org:** wrong pg password → 403 pg_auth_failed;
+missing creds → 400; valid creds → 201 with a token that then authenticates `GET /v1/subjects`
+(200); list returns metadata only; DELETE revokes (revoked token → 401); revoke with wrong
+password → 403. MySQL left clean (only the migrated seed row). `php -l` clean.
+
+**Security:** pg_password travels in the request body (HTTPS) and is never logged (MySQL writes
+bypass the Postgres sql.log tracer); the token is stored only as a sha256 hash.
+- Updated `requirements.md` §1.4 and this log.
+
+---

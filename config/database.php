@@ -32,6 +32,21 @@ class Database {
     }
 
     /**
+     * Verify a set of Postgres credentials by attempting a connection (host/port are the fixed
+     * deployment values). Returns true if the login succeeds. Used by the token-issuing endpoint:
+     * knowing a working Postgres login authorizes minting/managing tokens for that connection.
+     */
+    public static function testCredentials(string $dbName, string $dbUser, string $dbPass): bool {
+        try {
+            $dsn = sprintf("pgsql:host=%s;port=%s;dbname=%s;sslmode=disable", self::DB_HOST, self::DB_PORT, $dbName);
+            new PDO($dsn, $dbUser, $dbPass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]);
+            return true;
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
      * Private constructor to prevent direct instantiation
      */
     private function __construct() {

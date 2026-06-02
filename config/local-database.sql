@@ -8,6 +8,7 @@
 CREATE TABLE IF NOT EXISTS users (
     id          INT AUTO_INCREMENT PRIMARY KEY,
     token_hash  CHAR(64)     NOT NULL,
+    token_prefix VARCHAR(16) NULL,            -- first chars of the token, for diagnostics/listing
     user_id     INT          NOT NULL,
     role        VARCHAR(64)  NOT NULL DEFAULT 'executor',
     pg_dbname   VARCHAR(128) NOT NULL,

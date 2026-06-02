@@ -766,3 +766,11 @@ endpoints still work (relocated `mem_embed`/`mem_extract`); unknown/malformed/mi
 **Notes / security:** pg_password is plaintext in the localhost MySQL store (per decision); token
 stored as sha256 hash only. Each API token can map to a different tenant Postgres DB — multi-tenant
 fan-out from one API. To onboard a new tenant: insert a `users` row (token_hash + pg creds + role).
+
+### Phase 16.1 — token issuance/list/revoke (done)
+- `POST /v1/tokens` mint (returns plaintext token once), `GET /v1/tokens` list (metadata only),
+  `DELETE /v1/tokens/{id}` revoke. Authorization = the Postgres login itself
+  (`Database::testCredentials` connects to verify); list/revoke scoped to the authenticated
+  `(pg_dbname, pg_user)`. Token = `malu_<base64url(32)>`, stored as sha256 hash + 8-char prefix.
+- Added `token_prefix` column (idempotent). Tests in `tests/tokens_curls.sh` (self-cleaning).
+- Verified live: bad pw→403, missing→400, valid→201 + the token authenticates, list, revoke→401.

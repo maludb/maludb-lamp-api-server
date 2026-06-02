@@ -69,6 +69,12 @@ class LocalDatabase {
         return $row === false ? null : $row;
     }
 
+    /** Next app user_id to assign when a token-create request doesn't supply one. */
+    public static function nextUserId(): int {
+        $n = self::getInstance()->getConnection()->query("SELECT COALESCE(MAX(user_id), 0) + 1 AS n FROM users")->fetchColumn();
+        return (int) $n;
+    }
+
     private function __clone() {}
     public function __wakeup() {
         throw new Exception('Cannot unserialize singleton');

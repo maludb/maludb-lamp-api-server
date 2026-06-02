@@ -29,6 +29,8 @@ $my = new PDO($MY_DSN, $MY_USER, $MY_PASS, $opts);
 // 1. ensure schema (strip -- comment lines from the .sql, run the CREATE TABLE)
 $ddl = preg_replace('/^\s*--.*$/m', '', file_get_contents(__DIR__ . '/../config/local-database.sql'));
 $my->exec(trim($ddl));
+// idempotent column add for installs created before token_prefix existed (MariaDB supports IF NOT EXISTS)
+$my->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_prefix VARCHAR(16) NULL AFTER token_hash");
 echo "users table ensured\n";
 
 // 2. migrate Postgres api_tokens → MySQL users (by hash; attach Postgres creds + role)

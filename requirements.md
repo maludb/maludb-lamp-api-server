@@ -133,6 +133,20 @@ one API can front many Postgres tenants. `config/local-database.php` holds the M
 `tests/local_db_setup.php` creates + seeds it (migrating existing `api_tokens` hashes, so live
 tokens keep working). The Postgres password is stored as plaintext in the localhost-only store.
 
+**Token issuance (self-service) — `/v1/tokens` + `/v1/tokens/{id}`:**
+
+| URL | File | Methods | Notes |
+|---|---|---|---|
+| `/v1/tokens` | `tokens.php` | POST, GET | POST mints a token + stores the `users` row (returns the plaintext token ONCE); GET lists tokens for a connection (metadata only). |
+| `/v1/tokens/{id}` | `tokens_id.php` | DELETE | Revoke (delete) a token row. |
+
+Authorization is **the Postgres login itself**: the caller supplies `pg_dbname`/`pg_user`/
+`pg_password` in the body and the API verifies them with `Database::testCredentials()` (a real
+connection); knowing a working Postgres password authorizes minting/listing/revoking tokens for
+that connection. These endpoints do not call `require_auth()` (they operate on the MySQL store).
+The token value is `malu_<base64url(32 bytes)>`, stored only as a sha256 hash + an 8-char prefix.
+List/revoke are scoped to rows matching the authenticated `(pg_dbname, pg_user)`.
+
 **`api_tokens` table:**
 
 ```sql
