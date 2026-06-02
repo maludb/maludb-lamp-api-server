@@ -631,3 +631,77 @@ deleting a document cascades its soft tags but NOT its graph edges, so DELETE no
 **Out of scope / not needed:** no LLM-suggested links are created by these paths, so no
 `provenance='suggested'` review-flow routing was added (would slot into the existing
 `/v1/statements?provenance=suggested` queue if ever needed).
+
+---
+
+# Phase 15 — document → SVPO-extraction → vector-memory endpoints (maludb_core memory)
+
+## Findings (validated live against the upgraded DB)
+- Facades present & callable by our role (`zozocal` = executor+reader+read): `maludb_upload_document`,
+  `maludb_memory_ingest_edge` (→ statement_id), `maludb_memory_search` (TABLE chunk_id, statement_id,
+  document_id, source_text, distance, similarity, rank_no, subject_name, verb_name),
+  `maludb_memory_model_config` (jsonb, SECURITY DEFINER → works), `maludb_memory_set_model_config`
+  (SECURITY DEFINER → works, but FK-requires the alias to already exist), `secret_set`
+  (executor has malu$secret write).
+- **Still owner-only (need grant):** `register_model_provider` / `register_model_alias`
+  (`malu$model_provider`/`malu$model_alias` grant write to no role) and `__secret_resolve`
+  (needs `maludb_secret_consumer`). Decision: GRANT elevated rights to `zozocal`
+  (`maludb_llm_model_admin` + `maludb_secret_consumer`). I can't grant (not superuser) → hand the
+  DBA exact GRANTs; build the full flow; smoke-test the no-grant-needed paths now.
+- Provider kind ∈ {cloud_api, local_http, local_socket, local_runtime, shell_adapter, stub}
+  (NOT 'anthropic'/'openai'). Seeded source_types include document, conversation, log, note, ticket…
+  ('transcript' is NOT seeded → use 'conversation'/'document').
+- Decision: build the real HTTP extract/embed path but verify with a **deterministic local
+  embedding** (no live creds yet); same text → same vector so search round-trips.
+
+## Plan
+1. `.htaccess`: add `^v1/memory/<op> → memory_<op>.php` (mirrors the graph rule).
+2. `config/response.php` — memory helpers (all DB work in `db_tx_core()`):
+   - `mem_vector_literal(array $floats): string` → `'[..]'` (bind, cast `::maludb_core.malu_vector` in SQL).
+   - `mem_embed(string $text, array $cfg): array` — real embedding HTTP if configured, else a
+     deterministic sha256-seeded unit vector of `MALUDB_EMBED_DIM` (default 1536).
+   - `mem_chunk(string $text, int $max, int $overlap): array` — paragraph/sentence splitter in code.
+   - `mem_extract(string $chunk, array $cfg): array` — LLM HTTP → candidate-edges contract; never
+     runs without creds (process endpoint accepts pre-extracted `edges` to bypass for tests/clients).
+   - `mem_resolve_token(string $ref): ?string` — `__secret_resolve(ref)` (grant) else env fallback.
+   - `db_exec_redacted()` — run a write with the sensitive param redacted from sql.log (token).
+3. `memory_config.php` — GET `maludb_memory_model_config(namespace)`; PUT/POST: secret_set (redacted)
+   + register_model_provider + register_model_alias + set_model_config → return read-back.
+4. `memory_documents.php` — POST: read config → chunk → extract (LLM or body `edges`) → embed →
+   one `db_tx_core()`: `maludb_upload_document` then `maludb_memory_ingest_edge` per edge (atomic;
+   HTTP done before the tx opens). Returns {document_id, namespace, edges[], chunk_count}.
+5. `memory_search.php` — POST: embed query (same model) → `maludb_memory_search(...)` → rows.
+6. Tests: `memory_config_curls.sh`, `memory_documents_curls.sh`, `memory_search_curls.sh`
+   (self-cleaning; the no-creds smoke uploads a doc, ingests provided edges w/ deterministic
+   embeddings, searches by subject/verb, then deletes the doc + edges).
+7. Provenance: extraction edges default `provenance='suggested'` (review queue).
+
+## Review
+Built groups 1+2+3 + memory helpers; verified the no-creds pipeline live; DB left clean except
+the append-only vector store.
+
+**Done:**
+- [x] `.htaccess`: `/v1/memory/<op>` route.
+- [x] `config/response.php`: `mem_vector_literal`, `mem_embed` (+deterministic fallback),
+      `mem_chunk`, `mem_extract`, `mem_resolve_token`, `mem_http_post`, `db_one_redacted`;
+      SQLSTATE 42501 → 403 in the error map.
+- [x] `memory_config.php` (GET read-back; POST/PUT full config chain), `memory_documents.php`
+      (process pipeline, atomic per doc), `memory_search.php` (embed query + search, subject/verb
+      pre-filter required).
+- [x] Tests: `memory_config_curls.sh`, `memory_documents_curls.sh`, `memory_search_curls.sh`.
+
+**Verified live (no-creds):** process(provided edges + deterministic embed) → ingest → search
+round-trips at similarity ≈ 1.0; all validation/guard cases; config POST → 403 (expected until
+grant). Cleanup removed test docs/edges/subjects.
+
+**Blockers surfaced (need a DBA grant — chosen decision was "grant elevated rights"):**
+- `GRANT maludb_llm_model_admin TO zozocal;` — for register_model_provider/alias (config POST 403 until then).
+- `GRANT maludb_secret_consumer TO zozocal;` — for `__secret_resolve` (DB-resolved LLM token).
+- `malu$vector_chunk`/`tombstone_vector_chunk` are owner-only → vector store is append-only for
+  our role; smoke-test chunks in `apismoke` need superuser GC. Flagged; not a code bug.
+
+**Live model creds (env on the API host) for real extraction/embedding:** `MALUDB_LLM_TOKEN`,
+`MALUDB_EMBED_BASE_URL`, `MALUDB_EMBED_TOKEN`, `MALUDB_EMBED_MODEL`, `MALUDB_EMBED_DIM`.
+
+**Out of scope:** async queue path (`request_extraction`/`harvest_extractions`) — exists but no
+worker daemon, so the inline worker pattern is used per the prompt's default.

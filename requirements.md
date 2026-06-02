@@ -474,6 +474,32 @@ fields unchanged).
 > (no FK cascade in 0.85.0). Callers that hard-delete an object should delete its attributes
 > first (filter `GET /v1/attributes?target_kind=&target_id=`). Test files self-clean this way.
 
+### 4.13 Memory pipeline — document → SVPO-extraction → vector-memory (maludb_core memory)
+
+The API is the **orchestrator and model worker**: PostgreSQL can't make outbound HTTP calls, so
+the API chunks text, calls the LLM (extraction) + the embedding model, and writes results back
+via the `maludb_memory_*` facades. Embeddings pass as `'[..]'::maludb_core.malu_vector`; every
+embedding in a namespace must share one model + dimension.
+
+| URL | File | Methods | Notes |
+|---|---|---|---|
+| `/v1/memory/config` | `memory_config.php` | GET, POST, PUT | GET → `maludb_memory_model_config(namespace)`. POST/PUT: `secret_set` (token encrypted, redacted from logs) + `register_model_provider` + `register_model_alias` + `maludb_memory_set_model_config`, then read-back. |
+| `/v1/memory/documents` | `memory_documents.php` | POST | Upload → chunk (in code) → extract (LLM, or caller-supplied `edges`) → embed → one tx: `maludb_upload_document` then `maludb_memory_ingest_edge` per edge. Edges default `provenance='suggested'`. |
+| `/v1/memory/search` | `memory_search.php` | POST | Embed the query (same model) → `maludb_memory_search(...)`. A `subject` and/or `verb` is required (compartment pre-filter before the ANN). |
+
+> **Deployment privilege notes (verified against `zozocal`).** Provider kind ∈
+> `{cloud_api, local_http, local_socket, local_runtime, shell_adapter, stub}` (NOT
+> 'anthropic'/'openai'). `register_model_provider`/`register_model_alias` and `__secret_resolve`
+> are owner-restricted — `/v1/memory/config` POST returns **403** until the API role is granted
+> `maludb_llm_model_admin` (provider/alias) and `maludb_secret_consumer` (DB-resolved token).
+> `set_model_config`/`model_config`/`ingest_edge`/`search`/`secret_set` work as `maludb_memory_executor`+`reader`.
+> The graph-bound vector store is **append-only** for the executor role: `malu$vector_chunk` and
+> `tombstone_vector_chunk` are owner-only, so ingested chunks can be GC'd only by a superuser.
+>
+> **No-creds path:** `mem_embed()` falls back to a deterministic local embedding and the process
+> endpoint accepts pre-extracted `edges`, so upload→ingest→search round-trips without live models.
+> Async path (`request_extraction`/`harvest_extractions`) exists but is out of scope (no worker).
+
 ### 4.10 List denormalization
 
 To avoid N+1 calls from the client, list endpoints embed **count** fields in each row;

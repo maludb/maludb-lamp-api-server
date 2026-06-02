@@ -536,6 +536,218 @@ function document_neighbors(int $subject_id): array {
 }
 
 /* ---------------------------------------------------------------------------
+ * Memory pipeline helpers (maludb_core memory) — document → SVPO-extraction →
+ * vector-memory. PostgreSQL cannot make outbound HTTP calls, so the API is the
+ * model worker: it calls the LLM (extraction) and the embedding model, then writes
+ * results back via the maludb_memory_* facades. All DB work runs in db_tx_core()
+ * (search_path public, maludb_core → current_schema() = tenant, owner_schema stamped).
+ *
+ * No live model creds are required to exercise the pipeline: mem_embed() falls back
+ * to a deterministic local embedding (same text → same vector), so upload→ingest→
+ * search round-trips for tests; real creds (env / DB secret) switch on the HTTP path.
+ * ------------------------------------------------------------------------- */
+
+// Dimension of the deterministic fallback embedding. Every embedding in a namespace must
+// share one model + dimension; keep this stable per namespace. Override via env.
+function mem_embed_dim(): int {
+    $d = (int) (getenv('MALUDB_EMBED_DIM') ?: 1536);
+    return $d > 0 ? $d : 1536;
+}
+
+/** Render a float array as a malu_vector literal body, e.g. "[0.1,-0.2,...]". Cast in SQL. */
+function mem_vector_literal(array $floats): string {
+    // Fixed-precision, locale-independent formatting (avoid comma decimals).
+    $parts = array_map(fn($f) => rtrim(rtrim(sprintf('%.8f', (float) $f), '0'), '.') ?: '0', $floats);
+    return '[' . implode(',', $parts) . ']';
+}
+
+/**
+ * Embed text. If a real embedding endpoint is configured (cfg['embedding_base_url'] + a
+ * resolvable token), call it; otherwise return a deterministic unit vector derived from the
+ * text so the same span always embeds identically (good enough to round-trip search in tests).
+ * Returns a float[] of length mem_embed_dim().
+ */
+function mem_embed(string $text, array $cfg = []): array {
+    $base = $cfg['embedding_base_url'] ?? (getenv('MALUDB_EMBED_BASE_URL') ?: '');
+    $tok  = $cfg['embedding_token']    ?? (getenv('MALUDB_EMBED_TOKEN') ?: '');
+    $model= $cfg['embedding_model']    ?? (getenv('MALUDB_EMBED_MODEL') ?: '');
+    if ($base !== '' && $tok !== '' && $model !== '') {
+        return mem_embed_http($text, $base, $tok, $model);   // real provider (OpenAI-shape)
+    }
+    return mem_embed_deterministic($text);
+}
+
+/** Deterministic sha256-seeded unit vector of mem_embed_dim() floats in [-1,1], L2-normalized. */
+function mem_embed_deterministic(string $text): array {
+    $dim = mem_embed_dim();
+    $vec = [];
+    $i = 0; $sum = 0.0;
+    while (count($vec) < $dim) {
+        // Stream bytes from sha256(text . ":" . counter); map each byte to [-1,1).
+        $block = hash('sha256', $text . ':' . $i, true);
+        for ($b = 0; $b < strlen($block) && count($vec) < $dim; $b++) {
+            $v = (ord($block[$b]) - 127.5) / 127.5;
+            $vec[] = $v; $sum += $v * $v;
+        }
+        $i++;
+    }
+    $norm = sqrt($sum) ?: 1.0;
+    return array_map(fn($v) => $v / $norm, $vec);
+}
+
+/** Call an OpenAI-shape embeddings endpoint (POST {input,model} → {data:[{embedding}]}). */
+function mem_embed_http(string $text, string $base, string $token, string $model): array {
+    $resp = mem_http_post(
+        rtrim($base, '/') . '/embeddings',
+        ['Authorization: Bearer ' . $token, 'Content-Type: application/json'],
+        json_encode(['input' => $text, 'model' => $model])
+    );
+    $data = json_decode($resp, true);
+    $emb  = $data['data'][0]['embedding'] ?? null;
+    if (!is_array($emb)) {
+        json_error('upstream_error', 'Embedding provider returned no vector.', 502);
+    }
+    return array_map('floatval', $emb);
+}
+
+/**
+ * Split text into chunks of ~$max characters with $overlap-char overlap, preferring paragraph
+ * then sentence boundaries. Chunking is the API's job (the DB does not chunk). Verbatim text is
+ * preserved — each chunk's text is what gets embedded and stored as the edge source_span.
+ */
+function mem_chunk(string $text, int $max = 2000, int $overlap = 200): array {
+    $text = trim($text);
+    if ($text === '') return [];
+    if (mb_strlen($text) <= $max) return [$text];
+    $chunks = [];
+    $len = mb_strlen($text);
+    $pos = 0;
+    while ($pos < $len) {
+        $slice = mb_substr($text, $pos, $max);
+        if ($pos + $max < $len) {
+            // Back up to the last paragraph/sentence/space boundary inside the slice.
+            $cut = max(
+                mb_strrpos($slice, "\n\n") ?: -1,
+                mb_strrpos($slice, '. ')   ?: -1,
+                mb_strrpos($slice, ' ')    ?: -1
+            );
+            if ($cut > $max * 0.5) { $slice = mb_substr($slice, 0, $cut + 1); }
+        }
+        $slice = trim($slice);
+        if ($slice !== '') $chunks[] = $slice;
+        $advance = max(1, mb_strlen($slice) - $overlap);
+        $pos += $advance;
+    }
+    return $chunks;
+}
+
+/** Resolve a stored secret to its plaintext (needs maludb_secret_consumer); env fallback. */
+function mem_resolve_token(?string $secret_ref): ?string {
+    if ($secret_ref !== null && $secret_ref !== '') {
+        try {
+            $row = db_tx_core(fn() => db_one("SELECT maludb_core.__secret_resolve(?) AS tok", [$secret_ref]));
+            if ($row !== null && $row['tok'] !== null && $row['tok'] !== '') return (string) $row['tok'];
+        } catch (Throwable $e) {
+            // No maludb_secret_consumer grant (or secret missing) → fall through to env.
+        }
+    }
+    $env = getenv('MALUDB_LLM_TOKEN');
+    return $env !== false && $env !== '' ? $env : null;
+}
+
+/**
+ * Extract SVPO candidate edges from a chunk via the configured LLM (OpenAI-/Anthropic-shape chat).
+ * Returns the decoded candidate_edges array. Requires a configured + resolvable model — callers
+ * that have no creds should supply pre-extracted edges instead of calling this.
+ */
+function mem_extract(string $chunk, array $cfg): array {
+    $base  = $cfg['base_url'] ?? '';
+    $token = $cfg['token'] ?? null;
+    $model = $cfg['model_identifier'] ?? '';
+    if ($base === '' || $token === null || $model === '') {
+        json_error('model_not_configured', 'No LLM model/token configured for extraction; supply "edges" in the request or configure a model.', 409);
+    }
+    $tmpl   = $cfg['prompt_template'] ?? mem_default_prompt();
+    $prompt = str_replace('{{chunk}}', $chunk, $tmpl);
+    $gen    = is_array($cfg['generation_params'] ?? null) ? $cfg['generation_params'] : [];
+
+    // OpenAI-shape chat/completions (most cloud_api adapters accept this body shape).
+    $body = array_merge([
+        'model'    => $model,
+        'messages' => [['role' => 'user', 'content' => $prompt]],
+    ], $gen);
+    $resp = mem_http_post(
+        rtrim($base, '/') . '/chat/completions',
+        ['Authorization: Bearer ' . $token, 'Content-Type: application/json'],
+        json_encode($body)
+    );
+    $data    = json_decode($resp, true);
+    $content = $data['choices'][0]['message']['content'] ?? null;
+    if (!is_string($content)) {
+        json_error('upstream_error', 'LLM returned no content.', 502);
+    }
+    $parsed = json_decode($content, true);
+    $edges  = $parsed['candidate_edges'] ?? null;
+    if (!is_array($edges)) {
+        json_error('upstream_error', 'LLM output was not the candidate_edges contract.', 502);
+    }
+    return $edges;
+}
+
+/** Built-in extraction prompt (used when no template is configured). Must contain {{chunk}}. */
+function mem_default_prompt(): string {
+    return "Extract Subject-Verb-Predicate-Object edges from the text. Use SMALL canonical verbs "
+         . "(e.g. \"upgrade\", not \"performed_upgrade\"); put status/timing/role/detail into the "
+         . "predicate array as edge-attributes (value_text / value_timestamp / value_numeric). "
+         . "Prefer subject_type in person|software|project|other. Return ONLY JSON of the form "
+         . "{\"candidate_edges\":[{\"subject_text\":\"\",\"subject_type\":\"\",\"verb_text\":\"\","
+         . "\"predicate\":[{\"attr_name\":\"\",\"value_text\":\"\"}],\"source_span\":\"\",\"confidence\":0.0}]}.\n\n"
+         . "Text:\n{{chunk}}";
+}
+
+/** Minimal JSON POST over cURL with a hard timeout. Returns the response body; maps transport errors. */
+function mem_http_post(string $url, array $headers, string $json): string {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => $headers,
+        CURLOPT_POSTFIELDS     => $json,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => (int) (getenv('MALUDB_HTTP_TIMEOUT') ?: 60),
+        CURLOPT_CONNECTTIMEOUT => 10,
+    ]);
+    $body = curl_exec($ch);
+    if ($body === false) {
+        $err = curl_error($ch);
+        curl_close($ch);
+        json_error('upstream_error', 'Model HTTP call failed: ' . $err, 502);
+    }
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code >= 400) {
+        json_error('upstream_error', 'Model endpoint returned HTTP ' . $code . '.', 502);
+    }
+    return (string) $body;
+}
+
+/**
+ * Run a write whose params contain a secret, logging a redacted form to sql.log (the standard
+ * db_exec would log the plaintext token). Binds positionally; $redact indexes (1-based) are
+ * replaced with "<redacted>" in the trace. Returns the first row (or null).
+ */
+function db_one_redacted(string $sql, array $params, array $redact): ?array {
+    $pdo = Database::getInstance()->getConnection();
+    $t0  = microtime(true);
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $row = $stmt->fetch();
+    $logged = $params;
+    foreach ($redact as $i) { if (array_key_exists($i - 1, $logged)) $logged[$i - 1] = '<redacted>'; }
+    sql_log($sql, $logged, $row ? 1 : 0, (microtime(true) - $t0) * 1000);
+    return $row === false ? null : $row;
+}
+
+/* ---------------------------------------------------------------------------
  * Responses (requirements.md §1.5, §2.2, §2.3)
  * ------------------------------------------------------------------------- */
 
@@ -693,6 +905,8 @@ function handle_uncaught(Throwable $e): void {
         switch ($sqlstate) {
             case '23505':                       // unique_violation
                 $status = 409; $code = 'conflict';          $message = pg_error_message($e); break;
+            case '42501':                       // insufficient_privilege
+                $status = 403; $code = 'insufficient_privilege'; $message = pg_error_message($e); break;
             case '23502': case '23503': case '23514': // not_null / fk / check
             case '22000': case '22023': case '22P02': case 'P0001': // data exception / invalid value / bad cast / trigger RAISE
                 $status = 422; $code = 'validation_failed'; $message = pg_error_message($e); break;

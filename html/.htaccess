@@ -21,6 +21,10 @@ RewriteRule ^v1/objects/([a-zA-Z_][a-zA-Z0-9_-]*)$ \
 RewriteRule ^v1/graph/([a-zA-Z_][a-zA-Z0-9_-]*)$ \
             v1/graph_$1.php [QSA,L]
 
+# /v1/memory/<op>  ->  memory_<op>.php   (memory pipeline: config, documents, search).
+RewriteRule ^v1/memory/([a-zA-Z_][a-zA-Z0-9_-]*)$ \
+            v1/memory_$1.php [QSA,L]
+
 # 4-segment: /v1/<a>/<id>/<b>/<id>  ->  <a>_id_<b>_id.php?id=...&sub_id=...
 RewriteRule ^v1/([a-zA-Z][a-zA-Z0-9-]*)/([0-9]+)/([a-zA-Z][a-zA-Z0-9-]*)/([0-9]+)$ \
             v1/$1_id_$3_id.php?id=$2&sub_id=$4 [QSA,L]

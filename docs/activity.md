@@ -515,3 +515,59 @@ design). Confirmed deleting a document leaves dangling edges without the DELETE 
 - Updated `requirements.md` (§4.4 table + graph-nodes note) and this log.
 
 ---
+
+## Phase 15 — document → SVPO-extraction → vector-memory endpoints (maludb_core memory) — 2026-06-02
+
+**Prompt:** "Build: document → SVPO-extraction → vector-memory API endpoints over MaluDB."
+Three endpoint groups — (1) model config (model choice + base URL + token), (2) document
+processing (upload → chunk → extract SVPO → embed → ingest into the graph-bound vector store),
+(3) search. The API is the orchestrator + model worker (Postgres can't call out): it chunks,
+calls the LLM + embedding model, then writes back via the maludb_memory_* facades. Decisions
+(asked): **grant the API role elevated rights** for the config flow; **build the real HTTP path
+but verify with a deterministic embedding (no live creds yet)**; **build groups 1+2+3**.
+
+**Review findings before building (validated live):** the facades existed only partly until the
+user upgraded the DB. After the upgrade: `set_model_config`/`model_config`/`request_extraction`/
+`harvest_extractions` now exist; `ingest_edge`/`search`/`secret_set`/`upload_document` work as our
+role (`zozocal` = maludb_memory_executor + maludb_memory_reader + maludb_read). Still owner-only
+(grants NOT yet applied): `register_model_provider`/`register_model_alias` (malu$model_provider/
+alias grant write to no role) and `__secret_resolve` (needs maludb_secret_consumer). Provider kind
+∈ {cloud_api, local_http, local_socket, local_runtime, shell_adapter, stub}. malu$vector_chunk is
+owner-only → the vector store is append-only for the executor role.
+
+**Actions:**
+- `config/response.php` — memory helpers: `mem_vector_literal`, `mem_embed` (real OpenAI-shape
+  HTTP if MALUDB_EMBED_* env set, else deterministic sha256 unit vector of MALUDB_EMBED_DIM=1536),
+  `mem_chunk` (paragraph/sentence splitter w/ overlap), `mem_extract` (LLM chat → candidate_edges
+  contract), `mem_resolve_token` (`__secret_resolve` w/ env fallback), `mem_http_post`,
+  `db_one_redacted` (logs writes with the token param redacted). Added SQLSTATE 42501 →
+  403 insufficient_privilege to the global error map.
+- `html/v1/memory_config.php` (GET read-back; POST/PUT: secret_set + register provider/alias +
+  set_model_config → read-back), `memory_documents.php` (POST process: config → chunk → extract
+  or caller `edges` → embed → one db_tx_core(): upload_document + ingest_edge per edge; edges
+  default provenance='suggested'), `memory_search.php` (POST: embed query w/ same model →
+  memory_search; subject/verb pre-filter required → clean 400).
+- `html/.htaccess` — `/v1/memory/<op> → memory_<op>.php` (mirrors the graph rule).
+- Tests: `memory_config_curls.sh`, `memory_documents_curls.sh`, `memory_search_curls.sh`.
+
+**Verified live against https://fastapi.maludb.org (no-creds path):** process a doc with
+caller-supplied edges + deterministic embeddings → 201, 2 edges ingested ('suggested'); search
+filtered by subject/verb → the edge at similarity ≈ 1.0; validation 400s (missing query /
+no subject+verb / missing title|text), 409 model_not_configured (no edges + no model), config
+GET read-back, config POST → 403 insufficient_privilege (expected until grant), 405/401 guards.
+`php -l` clean on all files. Cleanup removed the test documents, document→subject edges, and
+subjects; **append-only residue:** a few vector chunks remain in the `apismoke` namespace because
+`malu$vector_chunk`/`tombstone_vector_chunk` are owner-only — a superuser must GC them.
+
+**DBA action required to enable group-1 writes + DB-resolved token (per the chosen decision):**
+```sql
+GRANT maludb_llm_model_admin TO zozocal;   -- register_model_provider / register_model_alias
+GRANT maludb_secret_consumer TO zozocal;   -- __secret_resolve (DB-resolved LLM token)
+-- (optional) a memory-admin/superuser path to GC malu$vector_chunk (tombstone) for cleanup.
+```
+Until then `/v1/memory/config` POST returns 403 (everything else works). For live extraction/
+embedding set env on the API host: MALUDB_LLM_TOKEN (or store via config+secret_consumer),
+MALUDB_EMBED_BASE_URL / MALUDB_EMBED_TOKEN / MALUDB_EMBED_MODEL / MALUDB_EMBED_DIM.
+- Updated `requirements.md` (new §4.13) and this log.
+
+---
