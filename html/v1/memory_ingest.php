@@ -76,7 +76,7 @@ if ($pr['api_key'] === null || $pr['api_key'] === '') {
 }
 
 // The 0.92.0 ingest facade must be present (the model JSON is passed to it verbatim).
-$has_facade = db_one("SELECT to_regprocedure('maludb_memory_ingest_extraction(jsonb,text,bigint)') IS NOT NULL AS ok");
+$has_facade = db_one("SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = 'maludb_memory_ingest_extraction') AS ok");
 if (!$has_facade || !$has_facade['ok']) {
     json_error('ingest_unavailable', 'maludb_memory_ingest_extraction is not available in this database (requires maludb_core 0.92.0).', 501);
 }
@@ -103,8 +103,12 @@ $result = db_tx_core(function () use ($text, $extraction) {
         [mb_substr(trim($text), 0, 80), $text]
     );
     $document_id = (int) $doc['id'];
+    // LLM-derived → stage as 'suggested' (review queue), consistent with the rest of the pipeline
+    // (the facade itself defaults to 'accepted'). The model JSON is passed verbatim.
     $row = db_one(
-        "SELECT maludb_memory_ingest_extraction(?::jsonb, 'document', ?) AS result",
+        "SELECT maludb_memory_ingest_extraction(
+                    p_extraction => ?::jsonb, p_source_kind => 'document',
+                    p_source_id => ?, p_provenance => 'suggested') AS result",
         [json_encode($extraction), $document_id]
     );
     return ['document_id' => $document_id, 'result' => ($row['result'] !== null ? json_decode($row['result']) : null)];

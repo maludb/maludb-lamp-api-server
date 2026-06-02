@@ -777,3 +777,31 @@ real OpenAI api_key via `POST /v1/model-prompts`. Then live ingest works end-to-
 - Updated `requirements.md` §4.13 and this log.
 
 ---
+
+## Phase 17.2 — 0.92.0 deployed: fix facade guard + wire ingest_extraction provenance — 2026-06-02
+
+**Prompt:** "0.92.0 has been deployed, try again."
+
+**Findings:** maludb_core is now **0.92.0**; `maludb_memory_ingest_extraction(p_extraction jsonb,
+p_source_kind text DEFAULT 'document', p_source_id bigint, p_provenance text DEFAULT 'accepted')`
+exists (returns jsonb). My Phase-17.1 guard used `to_regprocedure('...(jsonb,text,bigint)')`, which
+did NOT match the real 4-arg signature → it would have wrongly returned 501 even though the
+function exists.
+
+**Actions:**
+- `html/v1/memory_ingest.php` — guard now checks existence by name
+  (`EXISTS(SELECT 1 FROM pg_proc WHERE proname='maludb_memory_ingest_extraction')`); the ingest call
+  uses named args and passes `p_provenance => 'suggested'` (LLM-derived → review queue; the facade
+  defaults to 'accepted').
+
+**Verified live:** DB-level proof (rolled back) — upload_document + ingest_extraction with the
+prompt's EXAMPLE JSON returned `{created:{edges:5,verbs:3,episodes:1,subjects:3,...},
+resolved:{subjects:1}}` (Drajeo resolved to the existing subject 17 — KNOWN_SUBJECTS reuse works).
+Endpoint live: no key → 409; **fake key → 502 upstream (OpenAI 401)** i.e. it now passes the facade
+guard and reaches the LLM (no false 501). No Postgres residue (the 401 precedes any upload). Test
+key cleared; `php -l` clean.
+
+**Remaining to go fully live:** set the real OpenAI api_key on `chatgpt-4o` via POST /v1/model-prompts.
+- Updated this log.
+
+---
