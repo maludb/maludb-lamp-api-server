@@ -147,6 +147,8 @@ that connection. These endpoints do not call `require_auth()` (they operate on t
 The token value is `malu_<base64url(32 bytes)>`, stored only as a sha256 hash + an 8-char prefix.
 List/revoke are scoped to rows matching the authenticated `(pg_dbname, pg_user)`.
 
+**Tenant-connection errors:** if the Postgres connection for a token fails, the API returns a clear status instead of a generic 500 — **502 `tenant_db_auth_failed`** when the stored credential is rejected (auth failure), **503 `tenant_db_unavailable`** when the database is unreachable/missing.
+
 **`api_tokens` table:**
 
 ```sql

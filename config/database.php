@@ -6,6 +6,21 @@
  * Provides secure, reusable database connection for the application
  */
 
+/**
+ * Raised when the tenant Postgres connection itself fails (e.g. the password stored in the local
+ * MySQL `users` row is stale/wrong, or the database is unreachable). Carries the Postgres SQLSTATE
+ * so the global error handler can return a clear 502/503 instead of an opaque 500.
+ */
+class TenantDatabaseException extends RuntimeException {
+    public string $sqlstate;
+    public bool $isAuthFailure;
+    public function __construct(string $message, string $sqlstate, bool $isAuthFailure) {
+        parent::__construct($message);
+        $this->sqlstate = $sqlstate;
+        $this->isAuthFailure = $isAuthFailure;
+    }
+}
+
 class Database {
     private static $instance = null;
     private $connection;
@@ -72,7 +87,15 @@ class Database {
 
         } catch (PDOException $e) {
             error_log("Database Connection Error: " . $e->getMessage());
-            throw new Exception("Database connection failed. Please check your configuration.");
+            // Classify so the handler can return a rejected-credential (502) vs unreachable (503).
+            // PDO's pgsql driver surfaces "password authentication failed" as a generic connection
+            // failure (08006), not 28P01, so detect auth failures by message as well as SQLSTATE.
+            $msg = $e->getMessage();
+            $sqlstate = (is_array($e->errorInfo ?? null) && isset($e->errorInfo[0]) && $e->errorInfo[0] !== '')
+                ? (string) $e->errorInfo[0]
+                : (preg_match('/SQLSTATE\[([0-9A-Za-z]{5})\]/', $msg, $m) ? $m[1] : (string) $e->getCode());
+            $isAuth = str_starts_with($sqlstate, '28') || stripos($msg, 'authentication failed') !== false;
+            throw new TenantDatabaseException('Tenant database connection failed.', $sqlstate, $isAuth);
         }
     }
 

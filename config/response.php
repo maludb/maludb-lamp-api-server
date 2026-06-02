@@ -750,7 +750,16 @@ function pg_error_message(Throwable $e): string {
 function handle_uncaught(Throwable $e): void {
     $status = 500; $code = 'internal_error'; $message = 'An unexpected error occurred.';
 
-    if ($e instanceof PDOException) {
+    if ($e instanceof TenantDatabaseException) {
+        // The tenant Postgres connection failed: a rejected stored credential vs an unreachable DB.
+        if ($e->isAuthFailure) {
+            $status = 502; $code = 'tenant_db_auth_failed';
+            $message = 'The database credentials stored for this API token were rejected by Postgres.';
+        } else {
+            $status = 503; $code = 'tenant_db_unavailable';
+            $message = 'The tenant database is currently unavailable.';
+        }
+    } elseif ($e instanceof PDOException) {
         $sqlstate = (is_array($e->errorInfo ?? null) && isset($e->errorInfo[0]))
             ? (string) $e->errorInfo[0]
             : substr((string) $e->getCode(), 0, 5);

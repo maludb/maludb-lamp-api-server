@@ -680,3 +680,22 @@ bypass the Postgres sql.log tracer); the token is stored only as a sha256 hash.
 - Updated `requirements.md` §1.4 and this log.
 
 ---
+
+## Phase 16.2 — clear 502/503 for tenant connection failures — 2026-06-02
+
+**Prompt:** "Give a better response than 500 for a bad password."
+
+**Actions:**
+- `config/database.php` — new `TenantDatabaseException` (carries SQLSTATE + isAuthFailure). The
+  Database constructor now classifies a failed Postgres connect: PDO's pgsql driver surfaces
+  "password authentication failed" as 08006 (not 28P01), so auth failures are detected by message
+  as well as SQLSTATE.
+- `config/response.php` — `handle_uncaught()` maps `TenantDatabaseException` →
+  **502 `tenant_db_auth_failed`** (stored credential rejected) or **503 `tenant_db_unavailable`**
+  (unreachable/missing DB), instead of the previous opaque 500.
+
+**Verified live:** throwaway token with a wrong stored pg_password → 502 tenant_db_auth_failed;
+with a bad pg_dbname (valid pw) → 503 tenant_db_unavailable; dev token unaffected (200). MySQL
+left clean. `php -l` clean. Updated requirements.md §1.4 + this log.
+
+---
