@@ -75,7 +75,8 @@ class LocalDatabase {
      */
     public static function modelPrompt(string $model): ?array {
         $stmt = self::getInstance()->getConnection()->prepare(
-            "SELECT model_name, api_format, system_prompt, base_url, api_key, max_tokens
+            "SELECT model_name, model_identifier, api_format, system_prompt, base_url, api_key,
+                    max_tokens, generation_params
                FROM model_prompts WHERE model_name = ? LIMIT 1"
         );
         $stmt->execute([$model]);

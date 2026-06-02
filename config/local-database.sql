@@ -25,12 +25,14 @@ CREATE TABLE IF NOT EXISTS users (
 -- placeholders the /v1/memory/ingest endpoint fills before sending: {{verbs}}, {{verb_types}},
 -- {{subjects}}, {{subject_types}}, {{hints}}. base_url + api_key are the LLM connection.
 CREATE TABLE IF NOT EXISTS model_prompts (
-    model_name    VARCHAR(128) PRIMARY KEY,
-    api_format    VARCHAR(16)  NOT NULL DEFAULT 'openai',   -- 'openai' | 'anthropic'
-    system_prompt MEDIUMTEXT   NOT NULL,
-    base_url      VARCHAR(255) NOT NULL,
-    api_key       VARCHAR(255) NULL,
-    max_tokens    INT          NOT NULL DEFAULT 2048,
-    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    model_name       VARCHAR(128) PRIMARY KEY,    -- lookup key (the `model` request value)
+    model_identifier VARCHAR(128) NULL,           -- actual API model id (e.g. 'gpt-4o'); defaults to model_name
+    api_format       VARCHAR(16)  NOT NULL DEFAULT 'openai',   -- 'openai' | 'anthropic'
+    system_prompt    MEDIUMTEXT   NOT NULL,
+    base_url         VARCHAR(255) NOT NULL,
+    api_key          VARCHAR(255) NULL,
+    max_tokens       INT          NOT NULL DEFAULT 2048,
+    generation_params JSON        NULL,            -- merged into the request body (e.g. temperature, response_format)
+    created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

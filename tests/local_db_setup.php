@@ -27,50 +27,33 @@ $pg = new PDO("pgsql:host=$PG_HOST;port=$PG_PORT;dbname=$PG_DB;sslmode=disable",
 $my = new PDO($MY_DSN, $MY_USER, $MY_PASS, $opts);
 
 // 1. ensure schema (strip -- comment lines from the .sql, run the CREATE TABLE)
-// Run each CREATE TABLE statement from the .sql (strip -- comment lines first).
-$ddl = preg_replace('/^\s*--.*$/m', '', file_get_contents(__DIR__ . '/../config/local-database.sql'));
+// Run each CREATE TABLE statement from the .sql. Strip ALL -- comments (incl. inline) first —
+// an inline comment can contain ';' which would otherwise break the statement split.
+$ddl = preg_replace('/--.*$/m', '', file_get_contents(__DIR__ . '/../config/local-database.sql'));
 foreach (array_filter(array_map('trim', explode(';', $ddl))) as $stmt) {
     if (stripos($stmt, 'CREATE TABLE') !== false) { $my->exec($stmt); }
 }
-// idempotent column add for installs created before token_prefix existed (MariaDB supports IF NOT EXISTS)
+// idempotent column adds (MariaDB supports IF NOT EXISTS)
 $my->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_prefix VARCHAR(16) NULL AFTER token_hash");
+$my->exec("ALTER TABLE model_prompts ADD COLUMN IF NOT EXISTS model_identifier VARCHAR(128) NULL AFTER model_name");
+$my->exec("ALTER TABLE model_prompts ADD COLUMN IF NOT EXISTS generation_params JSON NULL");
 echo "users + model_prompts tables ensured\n";
 
-// Seed a default 'chatgpt-4o' prompt row (INSERT IGNORE: never overwrites a user-set prompt).
-// The system prompt is a placeholder template — replace it via POST /v1/model-prompts. It uses
-// the placeholders the ingest endpoint fills: {{verbs}} {{verb_types}} {{subjects}} {{subject_types}} {{hints}}.
-$default_prompt = <<<'PROMPT'
-You extract Subject-Verb-Predicate-Object (SVPO) edges from text for a knowledge graph.
-
-Use SMALL canonical verbs; reuse an existing verb/subject when one fits. Put status/timing/role/
-detail into the predicate array as edge-attributes (value_text / value_timestamp / value_numeric).
-
-Existing verbs:
-{{verbs}}
-
-Verb types:
-{{verb_types}}
-
-Existing subjects:
-{{subjects}}
-
-Subject types:
-{{subject_types}}
-
-Additional context / hints:
-{{hints}}
-
-Return ONLY JSON of the form:
-{"candidate_edges":[{"subject_text":"","subject_type":"","verb_text":"",
-"predicate":[{"attr_name":"","value_text":""}],"source_span":"","confidence":0.0}]}
-PROMPT;
-
+// Seed/refresh the default 'chatgpt-4o' prompt row from the versioned prompt file. The system
+// prompt + generation params are refreshed on every run; the api_key is preserved (COALESCE) so
+// re-running setup never clobbers a key set via POST /v1/model-prompts. KNOWN_SUBJECTS / KNOWN_VERBS
+// / HINTS are injected into the USER message by the ingest endpoint (not into the system prompt).
+$default_prompt = file_get_contents(__DIR__ . '/../config/prompts/chatgpt-4o.system.txt');
+$gen = json_encode(['temperature' => 0.1, 'response_format' => ['type' => 'json_object']]);
 $seed = $my->prepare(
-    "INSERT IGNORE INTO model_prompts (model_name, api_format, system_prompt, base_url, api_key, max_tokens)
-     VALUES ('chatgpt-4o','openai',?,'https://api.openai.com/v1',NULL,2048)"
+    "INSERT INTO model_prompts (model_name, model_identifier, api_format, system_prompt, base_url, api_key, max_tokens, generation_params)
+     VALUES ('chatgpt-4o','gpt-4o','openai',?,'https://api.openai.com/v1',NULL,2048,?)
+     ON DUPLICATE KEY UPDATE model_identifier=VALUES(model_identifier), api_format=VALUES(api_format),
+       system_prompt=VALUES(system_prompt), base_url=VALUES(base_url), max_tokens=VALUES(max_tokens),
+       generation_params=VALUES(generation_params)"
 );
-$seed->execute([$default_prompt]);
-echo "default chatgpt-4o prompt ensured (INSERT IGNORE)\n";
+$seed->execute([$default_prompt, $gen]);
+echo "default chatgpt-4o prompt seeded/refreshed from config/prompts/chatgpt-4o.system.txt\n";
 
 // 2. migrate Postgres api_tokens → MySQL users (by hash; attach Postgres creds + role)
 $tokens = $pg->query("SELECT user_id, token_hash, expires_at FROM api_tokens")->fetchAll();

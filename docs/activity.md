@@ -740,3 +740,40 @@ via `POST /v1/model-prompts` (the seeded default is a placeholder).
 - Updated `requirements.md` §4.13 and this log.
 
 ---
+
+## Phase 17.1 — install the GPT-4o memory-extraction prompt + retarget ingest to 0.92.0 contract — 2026-06-02
+
+**Prompt:** the user supplied the real "GPT-4o memory-extraction" SYSTEM prompt + USER template.
+Its contract differs from the Phase-17 candidate_edges path: the model emits ONE JSON object
+{subjects, verbs, episodes, edges, relationships} passed verbatim to
+`maludb_memory_ingest_extraction(<json>::jsonb,'document',<doc_id>)` (0.92.0); KNOWN_SUBJECTS /
+KNOWN_VERBS / HINTS go in the USER message (not the system prompt).
+
+**Finding:** the deployed DB is still 0.91.0 — `maludb_memory_ingest_extraction` does NOT exist.
+Live ingest is blocked until 0.92.0 is deployed (same pattern as the earlier facade/grant gaps).
+
+**Actions (everything not blocked by the DB):**
+- `config/prompts/chatgpt-4o.system.txt` (new) — the SYSTEM prompt, versioned. Seeded into MySQL.
+- `model_prompts` table: added `model_identifier` (actual API model id, e.g. gpt-4o; defaults to
+  model_name) and `generation_params` JSON. `tests/local_db_setup.php` now seeds/refreshes the
+  `chatgpt-4o` row from the prompt file (model_identifier=gpt-4o, generation_params
+  {"temperature":0.1,"response_format":{"type":"json_object"}}), preserving any set api_key; fixed
+  its comment-stripping to drop inline `--` comments (one contained a ';').
+- `config/local-database.php` — `modelPrompt()` returns model_identifier + generation_params.
+- `html/v1/memory_ingest.php` — retargeted to the prompt's contract: SYSTEM verbatim; USER built
+  from TEXT/HINTS/KNOWN_SUBJECTS/KNOWN_VERBS; LLM call via api_format with generation_params + the
+  real model_identifier; parse the whole JSON object; upload_document + pass JSON verbatim to
+  `maludb_memory_ingest_extraction`. Guards: 409 if api_key unset, **501 `ingest_unavailable`** if
+  the 0.92.0 facade is absent (checked via to_regprocedure before any LLM call). `preview` returns
+  the assembled SYSTEM + USER messages.
+
+**Verified live:** preview assembles the USER message with 4 KNOWN_SUBJECTS (name+type) + 9
+KNOWN_VERBS + the hints array, SYSTEM prompt installed verbatim (6843 chars); with a fake key set,
+non-preview returns 501 ingest_unavailable (guard fires before any external call); key cleared.
+MySQL holds the chatgpt-4o row (no api_key); no Postgres residue. `php -l` clean.
+
+**Still needed:** (1) deploy maludb_core 0.92.0 (adds maludb_memory_ingest_extraction); (2) set the
+real OpenAI api_key via `POST /v1/model-prompts`. Then live ingest works end-to-end.
+- Updated `requirements.md` §4.13 and this log.
+
+---
