@@ -908,3 +908,41 @@ fastapi.maludb.org).
 **Verified live:** `GET /v1/subjects?limit=3` → HTTP 200 with the documented shape; confirmed a
 UNIQUE index on `(owner_schema, canonical_name)` and the handler's `23505 → 409` mapping, so the
 "duplicate label → 409 (idempotent re-run)" note is accurate.
+
+---
+
+## Phase 21 — sample-curl: verbs + life-coach structures (Path A/B) + owner type SQL + extraction — 2026-06-08
+
+**Prompt:** Build a demo dataset showing how to set up user-defined structures and then extract from
+text/documents, for an AI Life Coach. Need both Path A and Path B as separate scripts, plus a way to
+set up subject types and verb types ("explore how to do that").
+
+**Exploration (verified live, 0.95.0):**
+- Subject types AND verb types are a closed, DB-enforced vocabulary. The API role (`zozocal`) cannot
+  write the picker views OR the base tables (`malu$svpor_subject_type` / `malu$svpor_verb_type`,
+  owned by `maludb`) — all paths return `42501`. The endpoints are GET-only.
+- Only self-service path for a SUBJECT type: `POST /v1/episodes {kind:X}` auto-registers `X` via the
+  SECURITY DEFINER helper `_ensure_subject_type_for_kind` (verified) — but it mints a stray event and
+  fixes display/description, so not used for entity types. VERB types have NO self-service path.
+- ⇒ First-class type setup requires an owner-run SQL script. Captured exact columns + the
+  `verb_type.semantic_class` CHECK (action|state|event|decision|communication|verification|failure|
+  planning|documentation|other). Confirmed `target_kind='subject'` for attributes; statement create
+  needs object_kind+object_id and an existing verb.
+
+**Files created in `sample-curl/`:**
+- `setup-types-owner.sql` — owner runs once (Path B prereq): registers 12 coaching subject types
+  (goal, outcome, goal_category, milestone, motivation, value, identity_statement, desired_identity,
+  fear, reward, meaning, vision) + 8 verb types (aspiration, commitment, obstacle, motivation,
+  emotion, preference, progress, reflection). ON CONFLICT DO NOTHING; INSERTs validated against live
+  schema (42501-not-42601). Attribute-like concepts (target/deadline/priority/goal_status/metric/
+  success_criteria) intentionally modeled as attributes, not types.
+- `setup-structures-pathA.md` — self-service (no owner): verbs untyped; nodes as `concept` + a
+  `category` attribute; goal qualifiers as attributes; statement linking via jq id-capture.
+- `setup-structures-pathB.md` — first-class custom types (needs owner SQL): typed verbs + typed
+  subjects + attributes + statements.
+- `setup-extract.md` — `/v1/memory/ingest`: preview (no model call) → real ingest → longer document
+  → verify via subjects/verbs/statements/episodes → suggested-review queue.
+- (`setup-verbs.md` from the prior turn included in this commit; 71 verbs incl. identity/consent.)
+
+**Verified:** bash seed-loop syntax (pipe-split) parses; owner SQL columns/constraints valid; verb
+seed-loop covers the typed coaching verbs. Not run against the live graph (left to the user).

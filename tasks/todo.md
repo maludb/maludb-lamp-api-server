@@ -907,3 +907,12 @@ determine what needs to be changed." (hand-off doc: API-server sync for 0.94.0 +
 - **Phase 18 cutover done:** re-seeded the live MySQL `chatgpt-4o` prompt (0.94.0 revision; api_key
   preserved) now that 0.95.0 (≥0.94.0) is deployed. Extraction live-correct end-to-end.
 - **Still deferred:** 0.95.0 embedding worker (opt-in).
+
+### Review (Phase 21) — done 2026-06-08
+- Explored type registration: subject + verb types are owner-only (API role gets 42501); documented
+  the episode-kind auto-register exception. Delivered `setup-types-owner.sql` for the owner.
+- Built the AI Life Coach sample-curl suite: setup-verbs.md, setup-structures-pathA.md (self-service,
+  concept+category), setup-structures-pathB.md (first-class custom types), setup-extract.md (LLM
+  ingest demo). Contracts sourced from subjects/verbs/statements/attributes/memory_ingest endpoints.
+- Owner SQL validated against the live schema (valid syntax/columns/constraints; CHECK on
+  semantic_class respected). Seed-loop bash validated.
