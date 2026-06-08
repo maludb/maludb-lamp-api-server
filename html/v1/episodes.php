@@ -1,6 +1,6 @@
 <?php
 /**
- * /v1/episodes  (maludb_core 0.82.0 — first-class events)
+ * /v1/episodes  (maludb_core 0.82.0 — first-class events; 0.94.0 — folded onto subjects)
  *
  *   GET   ?q=&kind=&provenance=&limit=   List episodes (newest occurrence first).
  *   POST                                 Create an episode. Returns it (201).
@@ -9,6 +9,13 @@
  * search-path-safe facade maludb_register_episode(...) (named args; trailing
  * p_provenance is new in 0.82.0). Everything runs inside db_tx_core() so the facade
  * can resolve its malu$* base tables + RLS grants.
+ *
+ * 0.94.0+: an episode is now backed by a SUBJECT (an event = a subject carrying a time).
+ * Registering an episode auto-mints that subject server-side, and the view exposes the
+ * linkage as `subject_id` + the subject's dated `canonical_name` ("<title> (YYYY-MM-DD)").
+ * `kind` becomes the subject's type; the canonical event-kind vocabulary is snake_case:
+ * meeting, daily_standup, review, retrospective, one_on_one, incident, planning, project,
+ * task, sprint, deployment, maintenance_window (free text, so others are accepted).
  *
  * Body:
  *   { title (required), kind? (default 'activity'), summary?, payload? (object),
@@ -22,14 +29,20 @@ require_once __DIR__ . '/../../config/response.php';
 
 require_auth();
 
-/** SELECT list for an episode row (shared with episodes_id.php's PATCH readback). */
+/**
+ * SELECT list for an episode row. `subject_id` + `canonical_name` (0.94.0+) surface the
+ * backing subject the event was folded onto; `canonical_name` is the server-minted dated
+ * name ("<title> (YYYY-MM-DD)").
+ */
 const EPISODE_COLS = "episode_id AS id, episode_kind AS kind, title, summary,
                       payload_jsonb AS payload, occurred_at, occurred_until, recorded_at,
-                      sensitivity, lifecycle_state, provenance, created_at";
+                      sensitivity, lifecycle_state, provenance, created_at,
+                      subject_id, canonical_name";
 
 /** Normalize scalar types on an episode row in place. */
 function shape_episode(array &$e): void {
-    $e['id']      = (int) $e['id'];
+    $e['id']         = (int) $e['id'];
+    $e['subject_id'] = isset($e['subject_id']) && $e['subject_id'] !== null ? (int) $e['subject_id'] : null;
     // Decode as an object (not assoc) so an empty payload stays {} rather than [].
     $e['payload'] = $e['payload'] === null ? null : json_decode($e['payload']);
 }

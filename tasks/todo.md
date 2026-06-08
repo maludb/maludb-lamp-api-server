@@ -897,3 +897,13 @@ determine what needs to be changed." (hand-off doc: API-server sync for 0.94.0 +
 - **Held (lockstep):** MySQL `chatgpt-4o` row NOT re-seeded — live DB is still 0.92.0. Re-seed via
   `php tests/local_db_setup.php` only after 0.94.0 is deployed.
 - **Deferred:** 0.95.0 embedding worker (opt-in, facades not deployed).
+
+### Review (Phase 19) — done 2026-06-08
+- **Verify (1) — PASS:** all episode endpoints work on live 0.95.0; `maludb_register_episode` /
+  `maludb_episode_get` signatures unchanged; registering an episode auto-mints the backing subject.
+- **Enhance (2):** `episodes.php` surfaces `subject_id` + dated `canonical_name` (GET list + POST);
+  `episodes_id.php` already returns the linked `subject` via episode_get (doc note); `episode-types.php`
+  doc aligned to the snake_case event-kind vocabulary. No tenant-data mutation.
+- **Phase 18 cutover done:** re-seeded the live MySQL `chatgpt-4o` prompt (0.94.0 revision; api_key
+  preserved) now that 0.95.0 (≥0.94.0) is deployed. Extraction live-correct end-to-end.
+- **Still deferred:** 0.95.0 embedding worker (opt-in).

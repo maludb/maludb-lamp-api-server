@@ -10,8 +10,11 @@
  * mapped to 409 by the global handler.
  *
  * Advisory only: episode.episode_kind is free text with no FK here, so an episode
- * may carry a kind that isn't in this list. Seeded: Meeting, Daily Standup, Review,
- * Retrospective, 1:1, Incident, Planning.
+ * may carry a kind that isn't in this list. 0.94.0+: a kind is also the backing
+ * subject's type, and the canonical event-kind vocabulary is now snake_case to match
+ * the extractor: meeting, daily_standup, review, retrospective, one_on_one, incident,
+ * planning, project, task, sprint, deployment, maintenance_window. The picker ships
+ * empty; populate it via POST to drive an event-kind dropdown.
  */
 
 require_once __DIR__ . '/../../config/response.php';

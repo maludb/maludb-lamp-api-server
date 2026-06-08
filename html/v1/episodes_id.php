@@ -2,10 +2,12 @@
 /**
  * /v1/episodes/{id}  (maludb_core 0.82.0)
  *
- *   GET     The assembled event: { episode, statements[], details[] } via
+ *   GET     The assembled event: { episode, subject, statements[], details[] } via
  *           maludb_episode_get(id). statements[] are every SVO link whose subject or
  *           object is this episode (attendees, attached documents, decisions) with
- *           *_label fields already resolved.
+ *           *_label fields already resolved. 0.94.0+: episode.subject_id and the top-level
+ *           `subject` section expose the subject this event was folded onto (its dated
+ *           canonical_name + subject_type = the event kind).
  *   PATCH   Update the episode (title/summary/kind/payload/occurred_at/occurred_until/
  *           sensitivity/provenance/lifecycle_state) via UPDATE maludb_episode.
  *   DELETE  Remove the episode.

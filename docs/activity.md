@@ -848,3 +848,42 @@ preserves any set `api_key` via `ON DUPLICATE KEY UPDATE`.
 MySQL row (`php tests/local_db_setup.php`) to make the new prompt live; verify the episode CRUD
 endpoints' (`maludb_register_episode` / `maludb_episode`) signatures still hold post-deploy. 0.95.0
 embedding worker deferred to a later phase.
+
+---
+
+## Phase 19 — 0.95.0 deployed: verify + enhance episode endpoints (subject-backed); Phase 18 cutover — 2026-06-08
+
+**Prompt:** "The database has now been updated 0.95.0 so please do both 1 and 2" (verify the episode
+endpoints + surface the new subject linkage / align kind vocabulary).
+
+**Findings (live 0.95.0, introspected + rolled-back round-trips):**
+- `maludb_episode` is a `public`-schema view reading `malu$episode_object WHERE owner_schema='public'`
+  and now exposes **`subject_id`** + a correlated **`canonical_name`** (from `malu$svpor_subject`).
+  This deployment is one-database-per-tenant: the tenant schema is `public` (db_tx_core sets
+  `search_path = public, maludb_core`), so owner_schema='public' is correct. (A first round-trip
+  using `search_path = zozocal,...` falsely showed the row "missing" — wrong owner_schema; corrected.)
+- Signatures **unchanged**: `maludb_register_episode(8 args)`, `maludb_episode_get(bigint)`.
+- **Verify (1) PASSES:** POST→register + view readback, GET list, GET {id} (episode_get), PATCH
+  (UPDATE view), `?with=attributes` (maludb_episode_with_attributes — now carries subject_id/
+  canonical_name/attributes), DELETE — all work. Registering an episode **auto-mints the backing
+  subject** (e.g. subject_type='meeting', canonical_name="<title> (YYYY-MM-DD)"). episode_get
+  returns a top-level `subject` section.
+
+**Actions (enhance, 2):**
+- `html/v1/episodes.php` — `EPISODE_COLS` += `subject_id, canonical_name`; `shape_episode()` casts
+  `subject_id` to int (nullable). GET list + POST readback now surface the linkage. Header doc
+  updated (events are subject-backed; snake_case kind vocabulary).
+- `html/v1/episodes_id.php` — doc only: GET/PATCH already return `episode.subject_id` + a top-level
+  `subject` section via `maludb_episode_get` (no code change needed).
+- `html/v1/episode-types.php` — doc only: aligned the advisory kind vocabulary to the extractor's
+  snake_case list (meeting … deployment, maintenance_window) and noted kind = subject type. No data
+  mutation (picker ships empty). All three files `php -l` clean; shaped GET output verified to
+  include `subject_id` (int) + dated `canonical_name`.
+
+**Phase 18 cutover (now unblocked by 0.95.0 ≥ 0.94.0, per the prior durable authorization):**
+- Ran `php tests/local_db_setup.php` to re-seed the MySQL `chatgpt-4o` row from the 0.94.0 prompt
+  file. Verified live: 7832 chars, **no "episode" mention**, contains "EVENTS ARE SUBJECTS WITH A
+  TIME" + `occurred_at_text`; **api_key preserved**. Extraction is now live-correct on the new
+  contract end-to-end.
+
+**Remaining:** 0.95.0 embedding worker still deferred (opt-in; entities queue harmlessly).
