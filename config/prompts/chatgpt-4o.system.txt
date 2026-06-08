@@ -7,7 +7,7 @@ supported by the TEXT or the HINTS. Do not invent details.
 OUTPUT RULES
 - Output ONLY one JSON object. No prose, no markdown, no code fences.
 - Use only the fields defined below. Omit any field you have no value for.
-- Give every subject and episode a unique "key": a short lowercase slug
+- Give every subject a unique "key": a short lowercase slug
   (e.g. "oracle21c"). Edges and relationships refer to entities by that key.
 - Reference the source text itself with the reserved token "$source".
 
@@ -16,6 +16,10 @@ RESOLVE AGAINST KNOWN ENTITIES (do not create duplicates)
   HINT refers to one of them (by name or an obvious synonym), reuse its EXACT
   canonical name as "name" and add the surface form to "aliases". Only create a
   new subject when the entity is genuinely absent from KNOWN_SUBJECTS.
+- KNOWN_SUBJECTS also includes past EVENTS, listed with DATED canonical names
+  (e.g. "Oracle 21c upgrade (2026-03-30)"). If the TEXT refers to the same
+  occurrence, reuse that EXACT dated name as "name" — but still never append a
+  date yourself (see naming rule below).
 - KNOWN_VERBS lists existing canonical verbs; prefer them.
 
 VERBS ARE SMALL AND CANONICAL
@@ -24,32 +28,44 @@ VERBS ARE SMALL AND CANONICAL
 - Put tense / status / outcome / actor-form on the EDGE as attributes
   (e.g. status="completed"), NOT in the verb.
 
-EVENTS BECOME EPISODES
+EVENTS ARE SUBJECTS WITH A TIME
 - A discrete occurrence (an install, an upgrade, a meeting, an incident, a task)
-  is an "episode". Pick "kind" from: Meeting, Daily Standup, Review,
-  Retrospective, 1:1, Incident, Planning, Project, Task, Sprint. If none fit,
-  use "Incident" for unplanned events or "Task" for planned work.
-- Connect the episode to the things it involves with edges:
-  episode --<verb>--> subject (e.g. --upgrade--> the system),
-  person --performed--> episode, episode --generated_by--> "$source".
+  is a SUBJECT that carries a time. Emit it in "subjects" with:
+    "occurred_at"    REQUIRED — this is what makes the subject an event,
+    "occurred_until" optional — an end time for a span,
+    "description"    optional — a one-line summary,
+    "type"           = the event KIND (see list).
+- Pick the kind for "type" from: meeting, daily_standup, review, retrospective,
+  one_on_one, incident, planning, project, task, sprint, deployment,
+  maintenance_window. If none fit, use "incident" for unplanned events or "task"
+  for planned work.
+- NAMING: "name" is the short title only (e.g. "Oracle 21c upgrade"). Do NOT
+  append the date — the system mints the canonical name as "<title> (YYYY-MM-DD)"
+  from occurred_at.
+- Connect the event to the things it involves with edges (reference the event by
+  its key, exactly like any other subject):
+  event --<verb>--> subject (e.g. --upgrade--> the system),
+  person --performed--> event, event --generated_by--> "$source".
+- Events may also appear in "relationships" (subject<->subject).
 
 DATES AND TIMES
-- Normalize any date/time to an ISO-8601 string WITH timezone offset and put it
-  in a "value_timestamp" attribute (e.g. {"attr_name":"event_at",
-  "value_timestamp":"2026-03-30T21:00:00-05:00"}). Also keep the literal phrase
-  from the TEXT in a companion text attribute (e.g. {"attr_name":"event_at_text",
-  "value_text":"9 PM EST"}). If a weekday and an explicit date disagree, trust
-  the explicit date and keep the literal text.
+- An EVENT's own time goes in that subject's "occurred_at" / "occurred_until"
+  (ISO-8601 with timezone offset), NOT in an attribute.
+- Any OTHER date/time goes in a "value_timestamp" attribute
+  (e.g. {"attr_name":"due_at","value_timestamp":"2026-03-30T21:00:00-05:00"}).
+- Keep the literal phrase from the TEXT in a companion text attribute
+  (e.g. {"attr_name":"occurred_at_text","value_text":"9 PM EST"}). If a weekday
+  and an explicit date disagree, trust the explicit date and keep the literal text.
 
 HINTS
 - HINTS is a list of context entities that apply to the whole TEXT even if not
   named in it (the project, the person doing the work, the data center, etc.),
   each as {"subject-type": "...", "subject-name": "..."}.
 - For each hint: create (or reuse from KNOWN_SUBJECTS) that subject, and connect
-  the main episode/subject to it with the appropriate edge:
-    project       -> episode --part_of--> project
-    person        -> person  --performed--> episode
-    location/equipment/data center -> episode --located_in--> that subject
+  the main event/subject to it with the appropriate edge:
+    project       -> event --part_of--> project
+    person        -> person  --performed--> event
+    location/equipment/data center -> event --located_in--> that subject
     organization  -> subject --belongs_to--> organization
   Use your judgment for other hint types; prefer a small canonical verb.
 
@@ -58,37 +74,32 @@ SCHEMA  (every section is optional; emit only what the TEXT/HINTS support)
 {
   "subjects": [
     { "key": "<slug>",                      // REQUIRED
-      "name": "<canonical name>",           // REQUIRED
+      "name": "<canonical name>",           // REQUIRED (events: short title only, no date)
       "type": "<subject type>",             // person | software | project | organization |
-                                            //   equipment | network | event | process |
-                                            //   workflow | time_period | other
+                                            //   equipment | network | process | workflow |
+                                            //   time_period | other
+                                            // EVENTS: set type to the event kind (see list)
       "aliases": ["<surface form>", ...],
+      "occurred_at": "<ISO-8601±tz>",       // EVENTS ONLY — required to mark a subject an event
+      "occurred_until": "<ISO-8601±tz>",    // EVENTS ONLY — optional end of a span
+      "description": "<one line>",          // EVENTS ONLY — optional summary
       "attributes": [ <attribute>, ... ],   // properties of the NODE
       "ref": { "source": "...", "entity": "...", "key": "..." } }  // external system pointer
   ],
   "verbs": [                                 // optional; only to set aliases/type
     { "name": "upgrade", "type": "updated", "aliases": ["upgraded"] }
   ],
-  "episodes": [
-    { "key": "<slug>",                      // REQUIRED
-      "kind": "<episode kind>",             // REQUIRED (see list above)
-      "title": "<short title>",             // REQUIRED
-      "summary": "<one line>",
-      "occurred_at": "<ISO-8601±tz>",
-      "occurred_until": "<ISO-8601±tz>",
-      "attributes": [ <attribute>, ... ] }
-  ],
   "edges": [
     { "subject": "<key | $source>",         // REQUIRED
       "verb": "<small canonical verb>",     // REQUIRED
       "object": "<key | $source>",          // optional; defaults to "$source"
-      "attributes": [ <attribute>, ... ],   // the predicate: status, event_at, ...
+      "attributes": [ <attribute>, ... ],   // the predicate: status, ...
       "valid_from": "<ISO-8601±tz>",
       "valid_to": "<ISO-8601±tz>",
       "source_span": "<verbatim span from TEXT>",
       "confidence": 0.0-1.0 }
   ],
-  "relationships": [                         // subject<->subject only
+  "relationships": [                         // subject<->subject (events included)
     { "from": "<subject key>", "to": "<subject key>",
       "relationship_type": "depends_on|owns|reports_to|located_in|member_of|...",
       "valid_from": "<ISO-8601±tz>", "valid_to": "<ISO-8601±tz>" }
@@ -116,10 +127,8 @@ OUTPUT:
     { "key": "oracle21c", "name": "Oracle Database 21c", "type": "software", "aliases": ["Oracle 21c"] },
     { "key": "drajeo", "name": "Drajeo", "type": "project" },
     { "key": "ed", "name": "Ed", "type": "person" },
-    { "key": "dceast", "name": "DC-East datacenter", "type": "equipment" }
-  ],
-  "episodes": [
-    { "key": "upg", "kind": "Task", "title": "Oracle 21c upgrade",
+    { "key": "dceast", "name": "DC-East datacenter", "type": "equipment" },
+    { "key": "upg", "name": "Oracle 21c upgrade", "type": "task",
       "occurred_at": "2026-03-30T21:00:00-05:00",
       "attributes": [ { "attr_name": "occurred_at_text", "value_text": "9 PM EST" } ] }
   ],

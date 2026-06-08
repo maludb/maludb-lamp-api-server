@@ -819,3 +819,81 @@ fan-out from one API. To onboard a new tenant: insert a `users` row (token_hash 
   `(pg_dbname, pg_user)`. Token = `malu_<base64url(32)>`, stored as sha256 hash + 8-char prefix.
 - Added `token_prefix` column (idempotent). Tests in `tests/tokens_curls.sh` (self-cleaning).
 - Verified live: bad pw→403, missing→400, valid→201 + the token authenticates, list, revoke→401.
+
+---
+
+## Phase 18 — Sync API extractor to maludb_core 0.94.0 (episodes folded into subjects) + 0.95.0 note
+
+**Prompt:** "We made some changes to the database related to episodes, please read this and
+determine what needs to be changed." (hand-off doc: API-server sync for 0.94.0 + 0.95.0, tag v4.3.0)
+
+### Findings (investigation done)
+- **Live DB is still 0.92.0** (verified): `maludb_memory_ingest_extraction` exists and *accepts*
+  `episodes[]`; `maludb_register_episode` + `maludb_episode` view exist; the 0.95.0 embedding
+  facades (`maludb_embedding_dirty_claim/_complete/_card`) do **not** exist. So this is a
+  prepare-ahead-of-deploy task (same pattern as Phase 17.1), and **0.94.0 is BREAKING in lockstep**.
+- The only API surface that emits the extraction contract is the **GPT-4o SYSTEM prompt**
+  (`config/prompts/chatgpt-4o.system.txt`), which still uses the old `episodes[]` shape.
+- `html/v1/memory_ingest.php` passes the model JSON **verbatim** to the facade, so the contract
+  change is carried entirely by the prompt — no PHP contract code to change.
+- Confirmed negatives: no reader of the ingest report's `episode_attributes` field; no
+  `json_schema` structured output (uses `response_format:{type:json_object}`) → no schema to
+  regenerate.
+- The live prompt is read from the **MySQL `model_prompts` row**, not the file. Editing the file
+  does nothing live until the row is re-seeded (`tests/local_db_setup.php`). **That re-seed is the
+  cutover lever for lockstep with the 0.94.0 deploy.**
+
+### Plan (0.94.0 — required)
+- [ ] Rewrite `config/prompts/chatgpt-4o.system.txt` to the 0.94.0 revision:
+  - [ ] "every subject **and episode** a unique key" → "every **subject** a unique key".
+  - [ ] Replace "EVENTS BECOME EPISODES" with "EVENTS ARE SUBJECTS WITH A TIME": an event is a
+        `subjects[]` entry with `occurred_at` (required — makes it an event), optional
+        `occurred_until`, optional `description`, and `type` = the event kind.
+  - [ ] Event kinds → lowercase snake_case: `meeting, daily_standup, review, retrospective,
+        one_on_one, incident, planning, project, task, sprint, deployment, maintenance_window`.
+  - [ ] Remove bare `event` from the subject `type` list.
+  - [ ] Edges: `event --<verb>--> subject`, `person --performed--> event`,
+        `event --generated_by--> "$source"`.
+  - [ ] DATES: the event's own time goes in the subject's `occurred_at`/`occurred_until`; *other*
+        times still go in `value_timestamp` attributes. Rename companion text attr
+        `event_at_text` → `occurred_at_text`.
+  - [ ] HINTS mapping: `project -> event --part_of--> project`; `person -> person --performed-->
+        event`; `location/equipment/data center -> event --located_in--> that subject`.
+  - [ ] Naming rule: `name` is the short title only — do **not** append the date (server mints
+        `"<title> (YYYY-MM-DD)"`).
+  - [ ] KNOWN_SUBJECTS note: events now appear with **dated** canonical names; reuse the EXACT
+        dated name for the same occurrence (still never append a date yourself).
+  - [ ] `relationships[]`: now subject<->subject **and events**.
+  - [ ] SCHEMA block: delete the `episodes` array; add `occurred_at`/`occurred_until`/`description`
+        to `subjects` as EVENTS-ONLY fields.
+  - [ ] EXAMPLE: re-render the Oracle-upgrade event as a `subjects[]` entry (type `task`,
+        `occurred_at`, `occurred_at_text` attr); edges reference its key as a subject.
+- [ ] `php -l` the touched PHP (none expected to change) and sanity-read the prompt.
+- [ ] **Cutover (lockstep):** re-seed the MySQL `chatgpt-4o` row from the file via
+      `tests/local_db_setup.php` **only when DB 0.94.0 is deployed** (else live 0.92.0 keeps the
+      old prompt). Decision point for the user.
+- [ ] No change needed in `memory_ingest.php` (verbatim passthrough; KNOWN_SUBJECTS already lists
+      event-subjects with dated names automatically once they're subjects). Verify post-deploy.
+
+### Plan (0.95.0 — optional, additive)
+- [ ] **Decision:** run the embedding worker now or defer? Facades aren't deployed (live 0.92.0),
+      similarity jumps are opt-in, and nothing breaks if no worker runs. **Recommend: defer** —
+      revisit when the DB is on 0.95.0 and the `maludb_embedding_dirty_claim → _complete` loop can
+      actually run. No code now.
+
+### Out of scope / verify-only
+- Episode CRUD endpoints (`episodes.php`, `episodes_id.php`, `episode-types.php`,
+  `episodes_id_statements.php`) use `maludb_register_episode` + the `maludb_episode` view, which
+  the 0.94.0 doc does not list as removed (sidecar persists). Verify their signatures still hold
+  after the 0.94.0 deploy; no change planned now.
+
+### Review (Phase 18) — done 2026-06-08
+- **Changed:** `config/prompts/chatgpt-4o.system.txt` rewritten to the 0.94.0 contract
+  (events = subjects with `occurred_at`; snake_case kinds; `occurred_at_text`; no `episodes[]`;
+  event-only fields on `subjects`; EXAMPLE re-rendered). Docs updated (`docs/activity.md`).
+- **No code change** to `memory_ingest.php` (verbatim passthrough; KNOWN_SUBJECTS auto-includes
+  event-subjects). No `episode_attributes` reader and no `json_schema` output existed → nothing to
+  remove/regenerate.
+- **Held (lockstep):** MySQL `chatgpt-4o` row NOT re-seeded — live DB is still 0.92.0. Re-seed via
+  `php tests/local_db_setup.php` only after 0.94.0 is deployed.
+- **Deferred:** 0.95.0 embedding worker (opt-in, facades not deployed).

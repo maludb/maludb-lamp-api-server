@@ -805,3 +805,46 @@ key cleared; `php -l` clean.
 - Updated this log.
 
 ---
+
+---
+
+## Phase 18 — Sync API extractor to maludb_core 0.94.0 (episodes → subjects-with-a-time) — 2026-06-08
+
+**Prompt:** "We made some changes to the database related to episodes, please read this and
+determine what needs to be changed." (hand-off doc: API-server sync for 0.94.0 + 0.95.0, tag v4.3.0)
+
+**Findings:**
+- Live DB verified still **0.92.0** (not 0.94.0/0.95.0): `maludb_memory_ingest_extraction` exists
+  and still accepts `episodes[]`; `maludb_register_episode` + `maludb_episode` view exist; the
+  0.95.0 embedding facades (`maludb_embedding_dirty_claim/_complete/_card`) are absent. So this is
+  a prepare-ahead-of-deploy change, and 0.94.0 is **breaking in lockstep**.
+- The 0.94.0 contract change is carried entirely by the **GPT-4o SYSTEM prompt**. `memory_ingest.php`
+  passes model JSON verbatim, so no PHP contract code changes. Confirmed negatives: no
+  `episode_attributes` reader to drop; no `json_schema` structured output to regenerate (uses
+  `response_format:{type:json_object}`). KNOWN_SUBJECTS already lists event-subjects automatically
+  once events are subjects.
+- The live prompt is read from the MySQL `model_prompts` row, not the file — so editing the file is
+  inert until `tests/local_db_setup.php` re-seeds it. That re-seed is the lockstep cutover lever.
+
+**Decision (user):** edit the prompt file now, **hold the MySQL re-seed** until 0.94.0 is deployed;
+**defer** the 0.95.0 embedding worker (opt-in, facades not deployed, queues harmlessly).
+
+**Actions:**
+- Rewrote `config/prompts/chatgpt-4o.system.txt` to the 0.94.0 revision: "EVENTS ARE SUBJECTS WITH
+  A TIME" (events are `subjects[]` entries with `occurred_at`/`occurred_until`/`description`, `type`
+  = kind); lowercase snake_case kind list (meeting, daily_standup, …, deployment,
+  maintenance_window); removed bare `event` from the subject type list; `name` = short title only
+  (server mints the dated canonical name); companion text attr renamed `event_at_text` →
+  `occurred_at_text`; KNOWN_SUBJECTS note about reusing dated event names; HINTS edges retargeted to
+  `event`; `relationships[]` now includes events; SCHEMA drops `episodes[]` and adds the three
+  event-only fields to `subjects`; EXAMPLE re-rendered with the upgrade as a dated subject. Fixed a
+  typo (missing close-quote in the NAMING line).
+
+**Verified:** embedded EXAMPLE JSON parses (5 subjects, 1 with `occurred_at`, no `episodes` key); the
+file contains no "episode" mention; the seed binds the prompt as a parameter (arrows safe) and
+preserves any set `api_key` via `ON DUPLICATE KEY UPDATE`.
+
+**Remaining (deploy-coordinated):** when maludb_core 0.94.0 is deployed, re-seed the `chatgpt-4o`
+MySQL row (`php tests/local_db_setup.php`) to make the new prompt live; verify the episode CRUD
+endpoints' (`maludb_register_episode` / `maludb_episode`) signatures still hold post-deploy. 0.95.0
+embedding worker deferred to a later phase.
