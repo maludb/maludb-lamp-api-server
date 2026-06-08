@@ -887,3 +887,24 @@ endpoints + surface the new subject linkage / align kind vocabulary).
   contract end-to-end.
 
 **Remaining:** 0.95.0 embedding worker still deferred (opt-in; entities queue harmlessly).
+
+---
+
+## Phase 20 — sample-curl/ folder; first script setup-subjects.md — 2026-06-08
+
+**Prompt:** Create a `sample-curl` folder in the project root with sample cURL scripts users can run
+to test their DB + API install. First script `setup-subjects.md`: list existing subjects and add a
+full range of subjects, in the user's curl format (Bearer token + Accept header, host
+fastapi.maludb.org).
+
+**Actions:**
+- Created `sample-curl/setup-subjects.md`. Sections: Setup (env-var or literal forms), List
+  (all / `q` search / `limit` / `with=attributes` / by id), Add (`POST /v1/subjects` field table +
+  one example per canonical type: person, software, project, organization, equipment, network,
+  process, workflow, time_period, other + a one-shot seed loop), Verify, and a troubleshooting note
+  (401/400/409/502-503).
+- Contract sourced from `html/v1/subjects.php` (body `{label*, type?, description?, classifier_md?}`).
+
+**Verified live:** `GET /v1/subjects?limit=3` → HTTP 200 with the documented shape; confirmed a
+UNIQUE index on `(owner_schema, canonical_name)` and the handler's `23505 → 409` mapping, so the
+"duplicate label → 409 (idempotent re-run)" note is accurate.
