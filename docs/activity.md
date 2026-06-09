@@ -1019,3 +1019,14 @@ seed-loop covers the typed coaching verbs. Not run against the live graph (left 
 - Added `LICENSE` (MIT, © 2026 Edward Honour).
 - README "License" section: replaced "To be determined." with a link to the MIT LICENSE.
 - (No composer.json present, so no license field to set.)
+
+## 2026-06-09 — Catalog-driven extraction prompt (MaluDB 0.96.0)
+
+**Prompt:** Pasted the full 0.96.0 catalog-driven memory-extraction prompt spec; render subject types from the catalog instead of hardcoding. Plus: add a "supported MaluDB-core 0.96.0" reference near the top of README.
+
+**Changes:**
+- `html/v1/memory_ingest.php`: query `SELECT category, subject_type, description FROM maludb_subject_type ORDER BY category, sort_order` (fallback to `maludb_core.malu$svpor_subject_type` for the pre-reenable window); render `  - <type> — <description>` lines and strtr them into {{ENTITY_TYPES}} (category=entity) and {{EVENT_KINDS}} (category=event) in the stored SYSTEM prompt, before the preview branch. Preview now returns the rendered prompt + entity_types/event_kinds counts. Backward-compatible (strtr no-op without placeholders). USER message + ingest call unchanged.
+- `config/prompts/chatgpt-4o.system.txt`: replaced with the placeholder-driven 0.96.0 SYSTEM prompt.
+- `README.md`: added a "Supported MaluDB version: maludb_core 0.96.0" callout near the top (with the enable_memory_schema re-run note).
+- Stored-prompt update path: re-run `php tests/local_db_setup.php` (reads the .txt, preserves api_key) or POST /v1/model-prompts.
+- Flagged (not changed): config/llm.php mem_default_prompt() hardcodes person|software|project|other — separate legacy fallback, different contract.

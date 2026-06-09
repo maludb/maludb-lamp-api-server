@@ -916,3 +916,44 @@ determine what needs to be changed." (hand-off doc: API-server sync for 0.94.0 +
   ingest demo). Contracts sourced from subjects/verbs/statements/attributes/memory_ingest endpoints.
 - Owner SQL validated against the live schema (valid syntax/columns/constraints; CHECK on
   semantic_class respected). Seed-loop bash validated.
+
+---
+
+## 0.96.0 — catalog-driven extraction prompt (plan, awaiting verification)
+
+Goal: stop hardcoding subject-type vocabulary in the extraction SYSTEM prompt;
+render it from the tenant catalog (maludb_subject_type) into {{ENTITY_TYPES}}
+and {{EVENT_KINDS}} at request time.
+
+- [ ] memory_ingest.php: query `SELECT category, subject_type, description, sort_order
+      FROM maludb_subject_type ORDER BY category, sort_order`; build two lists of
+      `  - <subject_type> — <description>`; str_replace into {{ENTITY_TYPES}}
+      (category='entity') and {{EVENT_KINDS}} (category='event'). Do it BEFORE the
+      preview branch so preview shows the rendered prompt.
+- [ ] config/prompts/chatgpt-4o.system.txt: swap the two hardcoded vocab lists for
+      the placeholders + "ENTITY TYPES is CLOSED, use 'other'" / event-kind fallbacks.
+- [ ] Re-seed note: the live prompt lives in MySQL model_prompts.system_prompt (set via
+      POST /v1/model-prompts) — the .txt is only the seed copy. Updating the template
+      alone does NOT change a running tenant; document that the stored prompt must be
+      re-POSTed with the placeholders.
+- [ ] Decide graceful fallbacks: missing description, zero event rows.
+- [ ] Update docs/activity.md; commit.
+
+OPEN QUESTIONS (blocking):
+1. Pasted SYSTEM prompt is truncated at {{ENTITY_TYPES}} — need the full new text
+   (the {{EVENT_KINDS}} block + remainder) to update the template faithfully.
+2. Confirm row separator/format and the exact em-dash rendering.
+
+### 0.96.0 — Review (done)
+- memory_ingest.php: renders {{ENTITY_TYPES}}/{{EVENT_KINDS}} from `maludb_subject_type`
+  (fallback to `maludb_core.malu$svpor_subject_type` if the facade lacks `category` pre-reenable);
+  substitution via strtr before the preview branch (preview now shows the rendered prompt +
+  entity/event counts). Backward-compatible: no-op on legacy prompts without placeholders.
+- config/prompts/chatgpt-4o.system.txt: replaced hardcoded vocab with the placeholder-driven
+  0.96.0 SYSTEM prompt (entity list CLOSED→"other"; event kinds open with incident/task fallback).
+- USER message + ingest call unchanged (same JSON contract).
+- Update path for a running tenant: re-run `php tests/local_db_setup.php` (or POST /v1/model-prompts)
+  to refresh model_prompts.system_prompt; api_key is preserved.
+- README: added "Supported MaluDB version: maludb_core 0.96.0" note near the top.
+- Out of scope / flagged: config/llm.php mem_default_prompt() still hardcodes
+  "person|software|project|other" — separate legacy candidate_edges fallback, not this path.

@@ -57,8 +57,39 @@ $verb_rows = db_query("SELECT canonical_name FROM maludb_verb ORDER BY canonical
 $known_subjects_json = json_encode(array_map(fn($r) => ['name' => $r['name'], 'type' => $r['type']], $subj_rows), JSON_UNESCAPED_SLASHES);
 $known_verbs_json    = json_encode(array_map(fn($r) => $r['canonical_name'], $verb_rows), JSON_UNESCAPED_SLASHES);
 
+// --- SUBJECT TYPE CATALOG (0.96.0): render the entity/event vocabularies straight from the
+//     tenant catalog so the prompt's allowed types can never drift from what the ingest accepts.
+//     The maludb_subject_type facade exposes `category` once a tenant has re-run
+//     enable_memory_schema(); until then we fall back to the maludb_core base table, which
+//     carries `category` immediately after the 0.96.0 extension upgrade. ---
+try {
+    $type_rows = db_query(
+        "SELECT category, subject_type, description FROM maludb_subject_type ORDER BY category, sort_order"
+    );
+} catch (PDOException $e) {
+    // single-quoted on purpose: the `$` in malu$svpor_* must not be parsed as a PHP variable
+    $type_rows = db_query(
+        'SELECT category, subject_type, description FROM maludb_core.malu$svpor_subject_type ORDER BY category, sort_order'
+    );
+}
+$entity_lines = [];
+$event_lines  = [];
+foreach ($type_rows as $r) {
+    $desc = (isset($r['description']) && trim((string) $r['description']) !== '') ? ' — ' . $r['description'] : '';
+    $line = '  - ' . $r['subject_type'] . $desc;
+    if (($r['category'] ?? 'entity') === 'event') { $event_lines[] = $line; } else { $entity_lines[] = $line; }
+}
+// Fallbacks keep the model inside the catalog even if a list comes back empty.
+$entity_block = $entity_lines !== [] ? implode("\n", $entity_lines) : '  - other';
+$event_block  = $event_lines  !== [] ? implode("\n", $event_lines)  : '  - task';
+
 // --- build the messages ---
-$system  = $pr['system_prompt'];   // stored verbatim
+// Substitute the rendered catalog into the stored SYSTEM prompt. strtr is a no-op for a legacy
+// prompt with no {{ENTITY_TYPES}}/{{EVENT_KINDS}} placeholders, so this stays backward-compatible.
+$system  = strtr($pr['system_prompt'], [
+    '{{ENTITY_TYPES}}' => $entity_block,
+    '{{EVENT_KINDS}}'  => $event_block,
+]);
 $user    = "TEXT:\n{$text}\n\nHINTS:\n{$hints_json}\n\nKNOWN_SUBJECTS:\n{$known_subjects_json}\n\nKNOWN_VERBS:\n{$known_verbs_json}\n";
 
 if ($preview) {
@@ -67,7 +98,12 @@ if ($preview) {
         'api_format'    => $pr['api_format'],
         'system_prompt' => $system,
         'user_message'  => $user,
-        'counts'        => ['known_subjects' => count($subj_rows), 'known_verbs' => count($verb_rows)],
+        'counts'        => [
+            'known_subjects' => count($subj_rows),
+            'known_verbs'    => count($verb_rows),
+            'entity_types'   => count($entity_lines),
+            'event_kinds'    => count($event_lines),
+        ],
     ]);
 }
 
