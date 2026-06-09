@@ -104,12 +104,12 @@ df -h /                          # after — should show full capacity
 - PHP extensions: `pdo`, `pdo_pgsql`, `pdo_mysql`, `mbstring`, `json`, `fileinfo`.
 - Apache modules: `mod_rewrite`, `mod_headers`, `mod_deflate`.
 
-1a. Update and upgrade the Ubuntu installation.
+##1a. Update and upgrade the Ubuntu installation.
 ```
 sudo apt update
 sudo apt upgrade
 ```
-1b. Install Apache, MariaDB, PHP, and the database drivers
+##1b. Install Apache, MariaDB, PHP, and the database drivers
 
 This is a **LAMP** stack, so you install all four layers here. The local auth/routing store runs on **MariaDB** (a drop-in, MySQL-compatible engine — the PHP `pdo_mysql` driver and `mysql:` DSN work unchanged). The server needs **both** database drivers: `php8.3-pgsql` for the MaluDB **data store** (PostgreSQL) and `php8.3-mysql` for the **auth store** (MariaDB).
 ```
@@ -136,7 +136,7 @@ Verify the drivers loaded (both lines should print):
 ```
 php -m | grep -E 'pdo_pgsql|pdo_mysql'
 ```
-1c. Secure the MariaDB installation
+##1c. Secure the MariaDB installation
 
 MariaDB installs with insecure defaults. Run the interactive hardening script and answer the prompts:
 ```
@@ -156,7 +156,7 @@ You will be asked a series of questions. Recommended answers for a development s
 
 > On Ubuntu 24.04 the MariaDB `root` account uses `unix_socket` auth by default, so locally you connect with `sudo mariadb` (or `sudo mysql`) — no password. Do **not** put `root` in `config/local-database.php`; the bootstrap script in step 4 creates a **dedicated, non-root** application user for the auth store.
 
-1d. Enable PHP, URL rewriting, and restart Apache
+##1d. Enable PHP, URL rewriting, and restart Apache
 
 This project maps every `/v1/...` URL onto a single PHP file using **`.htaccess` rewrite rules**, so the Apache `rewrite` module must be enabled.
 ```
@@ -164,7 +164,7 @@ sudo a2enmod php8.3
 sudo a2enmod rewrite
 sudo systemctl restart apache2
 ```
-1e. Enable `.htaccess` overrides (`AllowOverride All`)
+##1e. Enable `.htaccess` overrides (`AllowOverride All`)
 
 Enabling `mod_rewrite` is not enough — Apache ignores `.htaccess` files unless **`AllowOverride`** is turned on for the web root. By default on Ubuntu, Apache's DocumentRoot is **`/var/www/html`**, which is exactly where this repo's `html/` directory lands once you clone it (see step 2). The repo ships its rewrite rules in [`html/.htaccess`](html/.htaccess).
 
@@ -187,7 +187,7 @@ sudo systemctl reload apache2
 ```
 > **Verify it works** after you've cloned the repo (step 2): a request to a `/v1/...` URL that returns JSON (rather than a `404` or the raw file) confirms `.htaccess` rewriting is active. If you get a `404` for a path you know exists, `AllowOverride` is almost certainly still `None`.
 
-1f. Install Composer 
+##1f. Install Composer 
 ```
 # If composer isn't installed, install it system-wide:
 curl -sS https://getcomposer.org/installer -o composer-setup.php
@@ -196,19 +196,18 @@ sudo mv composer.phar /usr/local/bin/composer
 rm composer-setup.php
 composer --version
 ```
-1g. Make sure the folder is in the path
+##1g. Make sure the folder is in the path
 ```
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
 . ~/.profile
 ```
-1h. Install MaluDB PHP Client using Composer.
+##1h. Install MaluDB PHP Client using Composer.
 ```
 composer require maludb/client
 ```
-### 2. Clone
 # Clone the and Change It to Your Own GitHub Repo
 
-# 2a. Make the parent directory of apache home writeable
+## 2a. Make the parent directory of apache home writeable
 
 ```bash
 cd /
@@ -217,13 +216,13 @@ cd /var
 sudo mv www www-original
 ```
 
-# 2b. Clone the template repo into a new folder on the server
+## 2b. Clone the template repo into a new folder on the server
 
 ```bash
 git clone https://github.com/maludb/maludb-lamp-api-server.git /var/www
 cd /var/www
 ```
-# 2c. Remove write privileges on the parent of apache home
+## 2c. Remove write privileges on the parent of apache home
 
 ```bash
 cd /
@@ -233,7 +232,7 @@ sudo chmod 777 www
 cd /var/www
 ```
 
-# 2d. Create your new repo on GitHub
+## 2d. Create your new repo on GitHub
 
 Create a new empty repository in your personal GitHub account.
 
@@ -245,7 +244,7 @@ Example new repo:
 https://github.com/your-github-username/my-new-repo
 ```
 
-# 2e. Change the remote from the template repo to your own repo
+## 2e. Change the remote from the template repo to your own repo
 
 Check the current remote:
 
@@ -275,7 +274,7 @@ Verify the change:
 git remote -v
 ```
 
-# 2f. Push the code to your new GitHub repo
+## 2f. Push the code to your new GitHub repo
 
 Make sure the branch is named `main`:
 
