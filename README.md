@@ -100,20 +100,206 @@ df -h /                          # after — should show full capacity
 
 ### 1. Requirements
 
-- Ubuntu 24.04 (or similar), Apache 2.4+, PHP 8.2+, PostgreSQL 14+, MySQL/MariaDB.
+- Ubuntu 24.04 (or similar), Apache 2.4+, PHP 8.2+, PostgreSQL 14+, MySQL/MariaDB server.
 - PHP extensions: `pdo`, `pdo_pgsql`, `pdo_mysql`, `mbstring`, `json`, `fileinfo`.
 - Apache modules: `mod_rewrite`, `mod_headers`, `mod_deflate`.
 
+1a. Update and upgrade the Ubuntu installation.
+```
+sudo apt update
+sudo apt upgrade
+```
+1b. Install Apache, MySQL, PHP, and the database drivers
+
+This is a **LAMP** stack, so you install all four layers here. The server needs **both** database drivers: `php8.3-pgsql` for the MaluDB **data store** (PostgreSQL) and `php8.3-mysql` for the local **auth/routing store** (MySQL). The `mysql-server` package provides the local MySQL engine itself.
+```
+# Apache web server
+sudo apt install apache2 -y
+sudo systemctl enable apache2
+sudo systemctl start apache2
+
+# MySQL server — the local auth/routing store
+sudo apt install mysql-server -y
+sudo systemctl enable mysql
+sudo systemctl start mysql
+
+# PHP 8.3 + Apache module + extensions + BOTH database drivers
+# php8.3-mysql provides pdo_mysql + mysqli; php8.3-pgsql provides pdo_pgsql
+sudo apt install -y \
+  php8.3 libapache2-mod-php8.3 php8.3-cli \
+  php8.3-pgsql php8.3-mysql \
+  php8.3-curl php8.3-gd php8.3-mbstring php8.3-xml php8.3-zip
+```
+Verify the drivers loaded (both lines should print):
+```
+php -m | grep -E 'pdo_pgsql|pdo_mysql'
+```
+1c. Secure the MySQL installation
+
+The local MySQL server is installed with insecure defaults. Run the interactive hardening script and answer the prompts:
+```
+sudo mysql_secure_installation
+```
+You will be asked a series of questions. Recommended answers for a development server:
+
+| Prompt | Recommended answer |
+|---|---|
+| **Setup VALIDATE PASSWORD component?** | `n` (optional; `y` enforces password complexity rules) |
+| **New password for root** | Set a strong password and record it — you'll need it for the auth store |
+| **Remove anonymous users?** | `y` |
+| **Disallow root login remotely?** | `y` |
+| **Remove test database and access to it?** | `y` |
+| **Reload privilege tables now?** | `y` |
+
+> On Ubuntu 24.04 the MySQL `root` account uses `auth_socket` by default, so locally you connect with `sudo mysql` (no password). The password you set above applies if you later switch `root` to password auth or create application users. Create a **dedicated, non-root MySQL user** for the auth store rather than using `root` in `config/local-database.php`.
+
+1d. Enable PHP, URL rewriting, and restart Apache
+
+This project maps every `/v1/...` URL onto a single PHP file using **`.htaccess` rewrite rules**, so the Apache `rewrite` module must be enabled.
+```
+sudo a2enmod php8.3
+sudo a2enmod rewrite
+sudo systemctl restart apache2
+```
+1e. Enable `.htaccess` overrides (`AllowOverride All`)
+
+Enabling `mod_rewrite` is not enough — Apache ignores `.htaccess` files unless **`AllowOverride`** is turned on for the web root. By default on Ubuntu, Apache's DocumentRoot is **`/var/www/html`**, which is exactly where this repo's `html/` directory lands once you clone it (see step 2). The repo ships its rewrite rules in [`html/.htaccess`](html/.htaccess).
+
+Edit the main Apache config:
+```
+sudo nano /etc/apache2/apache2.conf
+```
+Find the `<Directory /var/www/>` block and change `AllowOverride None` to `AllowOverride All`. If your DocumentRoot is `/var/www/html`, add (or edit) a block for it specifically:
+```apache
+<Directory /var/www/html>
+    Options FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
+```
+Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`), then test the config and reload:
+```
+sudo apache2ctl configtest        # should print: Syntax OK
+sudo systemctl reload apache2
+```
+> **Verify it works** after you've cloned the repo (step 2): a request to a `/v1/...` URL that returns JSON (rather than a `404` or the raw file) confirms `.htaccess` rewriting is active. If you get a `404` for a path you know exists, `AllowOverride` is almost certainly still `None`.
+
+1f. Install Composer 
+```
+# If composer isn't installed, install it system-wide:
+curl -sS https://getcomposer.org/installer -o composer-setup.php
+php composer-setup.php
+sudo mv composer.phar /usr/local/bin/composer
+rm composer-setup.php
+composer --version
+```
+1g. Make sure the folder is in the path
+```
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
+. ~/.profile
+```
+1h. Install MaluDB PHP Client using Composer.
+```
+composer require maludb/client
+```
 ### 2. Clone
+# Clone the and Change It to Your Own GitHub Repo
+
+# 2a. Make the parent directory of apache home writeable
 
 ```bash
-git clone https://github.com/maludb/maludb-lamp-api-server.git
-cd maludb-lamp-api-server
+cd /
+sudo chmod 777 var
+cd /var
+sudo mv www www-original
 ```
 
-### 3. Configure the data store
+# 2b. Clone the template repo into a new folder on the server
 
-Point Apache's DocumentRoot at `html/` and make sure `AllowOverride All` is set so `.htaccess` is honored.
+```bash
+git clone https://github.com/maludb/maludb-lamp-api-server.git /var/www
+cd /var/www
+```
+# 2c. Remove write privileges on the parent of apache home
+
+```bash
+cd /
+sudo chmod 755 /var
+cd www
+sudo chmod 777 www
+cd /var/www
+```
+
+# 2d. Create your new repo on GitHub
+
+Create a new empty repository in your personal GitHub account.
+
+Do **not** initialize it with a README, `.gitignore`, or license if you already have files locally.
+
+Example new repo:
+
+```text
+https://github.com/your-github-username/my-new-repo
+```
+
+# 2e. Change the remote from the template repo to your own repo
+
+Check the current remote:
+
+```bash
+git remote -v
+```
+
+It will probably show the template repo as `origin`.
+
+Change `origin` to your new GitHub repo.
+
+Using HTTPS:
+
+```bash
+git remote set-url origin https://github.com/your-github-username/my-new-repo.git
+```
+
+Using SSH:
+
+```bash
+git remote set-url origin git@github.com:your-github-username/my-new-repo.git
+```
+
+Verify the change:
+
+```bash
+git remote -v
+```
+
+# 2f. Push the code to your new GitHub repo
+
+Make sure the branch is named `main`:
+
+```bash
+git branch -M main
+```
+
+Push to your repo:
+
+```bash
+git push -u origin main
+```
+
+Your local project is now connected to your own GitHub repo.
+
+## Verify Everything Worked
+
+Run:
+
+```bash
+git remote -v
+git status
+```
+
+### 3. Configure the connection to the database
+
+Apache's DocumentRoot should be `html/` with `AllowOverride All` set so `.htaccess` is honored (configured in step **1e**).
 
 Copy the example config and fill in your PostgreSQL host/port:
 

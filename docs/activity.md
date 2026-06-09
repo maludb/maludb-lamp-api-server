@@ -970,3 +970,15 @@ seed-loop covers the typed coaching verbs. Not run against the live graph (left 
 **Changes:**
 - Removed the "Extend the root filesystem" step (1a) from `Maludb-Dev-Setup.md`; renumbered update/upgrade to 1a; left a pointer link to the README. Adjusted the summary checklist.
 - README had no Installation section, so added a new `## Installation` section (before "Getting started") containing the disk-extend (`lvextend -r` / `resize2fs`) instructions, linking out to the full setup guide.
+
+## 2026-06-09 — README install: add MySQL server, mysql_secure_installation, detailed .htaccess
+
+**Prompt:** In the README install step where drivers are installed, add the required MySQL server + MySQL PHP/PDO drivers for the local database. Add a mysql_secure_installation section and detailed instructions for enabling .htaccess. LAMP stack — repo installs in the Apache home dir.
+
+**Changes (README.md):**
+- 1b: consolidated the two overlapping php install lines into one; added `mysql-server` (the local auth store engine was never installed); kept `php8.3-mysql` (pdo_mysql + mysqli) and `php8.3-pgsql`; added a `php -m` driver verification.
+- 1c (new): `mysql_secure_installation` with a prompt-by-prompt recommendation table and a note about Ubuntu's auth_socket root login + using a dedicated non-root user.
+- 1d: enable `mod_rewrite` alongside php8.3 before restart.
+- 1e (new): detailed `.htaccess` / `AllowOverride All` instructions for `/var/www/html` (apache home / DocumentRoot), with configtest + reload and a verification note.
+- 1f/1g/1h: renumbered Composer/path/MaluDB-client steps.
+- Step 3 + Requirements: trimmed the duplicate AllowOverride line (points to 1e) and noted MySQL server in requirements.
