@@ -962,3 +962,11 @@ seed-loop covers the typed coaching verbs. Not run against the live graph (left 
   - 3b: relabeled the PATH line as Composer's *global* bin (`~/.config/composer/vendor/bin`); 3c notes running `composer require` inside `/var/www`.
   - 4/5: added verification commands, expected test-pdo output, troubleshooting, and a security note to delete the test script.
 - Added `tasks/setup-doc-plan.md` plan/checklist.
+
+## 2026-06-09 — Move disk-extend step to README
+
+**Prompt:** Remove 1a from Maludb-Dev-Setup.md and add it to README.md under the Installation section.
+
+**Changes:**
+- Removed the "Extend the root filesystem" step (1a) from `Maludb-Dev-Setup.md`; renumbered update/upgrade to 1a; left a pointer link to the README. Adjusted the summary checklist.
+- README had no Installation section, so added a new `## Installation` section (before "Getting started") containing the disk-extend (`lvextend -r` / `resize2fs`) instructions, linking out to the full setup guide.

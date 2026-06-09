@@ -17,37 +17,9 @@ The process has four stages:
 
 ## 1. Prepare Ubuntu
 
-### 1a. Extend the root filesystem to use all provisioned space
+> **Provisioning on ProxMox?** If you provisioned 50 GB or more, you may need to extend the root filesystem to claim all of the disk before you begin. See [**Installation → Extend the root filesystem**](README.md#installation) in the README.
 
-When you provision **50 GB or more** for an Ubuntu VM on ProxMox, the installer's default LVM layout does **not** claim all of the disk. The `lvextend` command grows the **logical volume**, but the **filesystem on top of it must also be resized** — otherwise the extra space stays invisible.
-
-Check what you have now:
-
-```bash
-df -h /
-sudo vgdisplay | grep Free   # shows unallocated space in the volume group
-```
-
-Grow the logical volume to use 100% of the free space, then resize the filesystem:
-
-```bash
-# Extend the logical volume AND resize the ext4 filesystem in one step (-r)
-sudo lvextend -r -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
-```
-
-> If your `lvextend` is older and does not support `-r`, run the two steps manually:
-> ```bash
-> sudo lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
-> sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
-> ```
-
-Confirm the new size:
-
-```bash
-df -h /
-```
-
-### 1b. Update and upgrade the Ubuntu installation
+### 1a. Update and upgrade the Ubuntu installation
 
 ```bash
 sudo apt update
@@ -267,7 +239,7 @@ connected
 
 ## Summary checklist
 
-- [ ] Disk extended (`df -h` shows full capacity)
+- [ ] Disk extended if needed (see README → Installation)
 - [ ] Ubuntu updated and upgraded
 - [ ] Apache installed, enabled, running
 - [ ] PHP 8.3 + `pdo_pgsql` + `pdo_mysql` installed

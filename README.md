@@ -72,6 +72,30 @@ Full rationale is in [`tech-stack.md`](tech-stack.md); the endpoint contracts, r
 
 ---
 
+## Installation
+
+A full step-by-step Ubuntu 24.04 setup (Apache, PHP, drivers, Composer, Node.js, Claude Code) lives in [`Maludb-Dev-Setup.md`](Maludb-Dev-Setup.md). One server-provisioning step worth calling out first:
+
+### Extend the root filesystem
+
+When you provision **50 GB or more** for an Ubuntu VM on ProxMox, the installer's default LVM layout does **not** claim all of the disk. The `lvextend` command grows the **logical volume**, but the **filesystem on top of it must also be resized** — otherwise the extra space stays invisible.
+
+Check what you have, grow the volume to 100% of free space, then resize the filesystem in one step:
+
+```bash
+df -h /                          # before
+sudo lvextend -r -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
+df -h /                          # after — should show full capacity
+```
+
+> If your `lvextend` does not support `-r`, run the two steps manually:
+> ```bash
+> sudo lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
+> sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
+> ```
+
+---
+
 ## Getting started
 
 ### 1. Requirements
