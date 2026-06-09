@@ -205,9 +205,9 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
 ```
 composer require maludb/client
 ```
-# Clone the and Change It to Your Own GitHub Repo
+## 2. Clone the and Change It to Your Own GitHub Repo
 
-## 2a. Make the parent directory of apache home writeable
+### 2a. Make the parent directory of apache home writeable
 
 ```bash
 cd /
@@ -216,13 +216,13 @@ cd /var
 sudo mv www www-original
 ```
 
-## 2b. Clone the template repo into a new folder on the server
+### 2b. Clone the template repo into a new folder on the server
 
 ```bash
 git clone https://github.com/maludb/maludb-lamp-api-server.git /var/www
 cd /var/www
 ```
-## 2c. Remove write privileges on the parent of apache home
+### 2c. Remove write privileges on the parent of apache home
 
 ```bash
 cd /
@@ -232,7 +232,7 @@ sudo chmod 777 www
 cd /var/www
 ```
 
-## 2d. Create your new repo on GitHub
+### 2d. Create your new repo on GitHub
 
 Create a new empty repository in your personal GitHub account.
 
@@ -244,7 +244,7 @@ Example new repo:
 https://github.com/your-github-username/my-new-repo
 ```
 
-## 2e. Change the remote from the template repo to your own repo
+### 2e. Change the remote from the template repo to your own repo
 
 Check the current remote:
 
@@ -274,7 +274,7 @@ Verify the change:
 git remote -v
 ```
 
-## 2f. Push the code to your new GitHub repo
+### 2f. Push the code to your new GitHub repo
 
 Make sure the branch is named `main`:
 
@@ -299,7 +299,7 @@ git remote -v
 git status
 ```
 
-### 3. Configure the connection to the database
+## 3. Configure the connection to the database
 
 Apache's DocumentRoot should be `html/` with `AllowOverride All` set so `.htaccess` is honored (configured in step **1e**).
 
@@ -311,7 +311,7 @@ cp config/database-example.php config/database.php
 
 `config/database.php` holds the **fixed** Postgres host/port; the per-request database name/user/password come from the MySQL auth store. The real `config/database.php` is gitignored so deployment credentials never reach the repo.
 
-### 4. Configure the auth store
+## 4. Configure the auth store
 
 First create the auth/routing store. The bootstrap script [`config/local-database.sql`](config/local-database.sql) creates the **database** (`maludb_auth`), a **dedicated non-root user** (`maludb`), the grants, and the **tables** in one shot. Before running it, open the file and change the placeholder password (`CHANGE_ME_AUTH_DB_PASSWORD`) to a strong value, then run it as the MariaDB root user:
 
@@ -327,9 +327,9 @@ cp config/local-database-example.php config/local-database.php
 # edit config/local-database.php — set DB_NAME=maludb_auth, DB_USER=maludb, DB_PASS=<your password>
 ```
 
-The `users` table maps a token's `sha256` hash to a role and the PostgreSQL `(dbname, user, password)` that requests with that token connect as. Tokens are stored only as hashes (of the token body after the `malu_` prefix) and are issued out-of-band — seed at least one row to make authenticated requests.
+The `users` table maps a token's `sha256` hash to a role and the PostgreSQL `(dbname, user, password)` that requests with that token connect as. Tokens are stored only as hashes (of the token body after the `malu_` prefix). You do not seed this table by hand — mint tokens through the API once the server is running (see [**Issuing API tokens**](#issuing-api-tokens)).
 
-### 5. Make a request
+## 5. Make a request
 
 ```bash
 curl https://your-host/v1/subjects \
@@ -349,6 +349,74 @@ Authorization: Bearer malu_<token>
 ```
 
 The server hashes the token body with `sha256`, looks it up in the MySQL `users` table, and resolves the PostgreSQL credentials for that tenant. Missing, invalid, or revoked tokens return `401`. Tokens are never logged in clear text — only a short prefix for diagnostics.
+
+---
+
+## Issuing API tokens
+
+Tokens are minted by the **`/v1/tokens`** endpoint — you do **not** edit the database by hand. There is a deliberate chicken-and-egg answer here: creating a token does **not** require an existing token. Instead, the caller proves authorization by supplying a **working PostgreSQL login** (`pg_dbname`, `pg_user`, `pg_password`); the endpoint connects to Postgres with those credentials and only mints the token if the connection succeeds. The token it returns will, from then on, connect as exactly that Postgres login.
+
+> **You must already have a PostgreSQL role/database for the tenant.** This server does not create Postgres logins — it issues API tokens that map onto logins you (or MaluDB) created. The fixed Postgres host/port come from `config/database.php`; only the db/user/password come from the request body.
+
+### Create a token — `POST /v1/tokens`
+
+```bash
+curl -X POST https://your-host/v1/tokens \
+  -H "Content-Type: application/json" \
+  -d '{
+    "pg_dbname": "tenant_db",
+    "pg_user": "tenant_user",
+    "pg_password": "tenant_password",
+    "role": "executor",
+    "device_name": "my-app-prod",
+    "expires_in_days": 365
+  }'
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `pg_dbname`, `pg_user`, `pg_password` | **yes** | The PostgreSQL login this token will connect as. Verified by an actual connection before the token is minted. |
+| `role` | no | Defaults to `executor`. |
+| `device_name` | no | Free-text label for listing/diagnostics (e.g. the app or machine name). |
+| `expires_in_days` | no | Positive integer; omit for a non-expiring token. |
+| `user_id` | no | App-level user id; auto-assigned if omitted. |
+
+The response returns the **plaintext token once** — store it now, it is not recoverable later (only its `sha256` is kept):
+
+```json
+{
+  "token": "malu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "id": 1,
+  "user_id": 1,
+  "role": "executor",
+  "pg_dbname": "tenant_db",
+  "pg_user": "tenant_user",
+  "expires_at": "2027-06-09 00:00:00",
+  "device_name": "my-app-prod"
+}
+```
+
+Put that `token` value in your application's `Authorization: Bearer malu_…` header.
+
+### List tokens — `GET /v1/tokens`
+
+Returns metadata only (never the token value or the Postgres password) for a given connection. Authorized the same way — by proving the Postgres login:
+
+```bash
+curl https://your-host/v1/tokens \
+  -H "Content-Type: application/json" \
+  -d '{"pg_dbname":"tenant_db","pg_user":"tenant_user","pg_password":"tenant_password"}'
+```
+
+### Revoke a token — `DELETE /v1/tokens/{id}`
+
+Deletes the token row (the `id` comes from the create/list response), authorized by the same Postgres login:
+
+```bash
+curl -X DELETE https://your-host/v1/tokens/1 \
+  -H "Content-Type: application/json" \
+  -d '{"pg_dbname":"tenant_db","pg_user":"tenant_user","pg_password":"tenant_password"}'
+```
 
 ---
 

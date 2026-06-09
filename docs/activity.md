@@ -993,3 +993,13 @@ seed-loop covers the typed coaching verbs. Not run against the live graph (left 
 - README 1c: retitled to "Secure the MariaDB installation"; updated the prompt table to MariaDB's actual prompts (unix_socket auth) and the root-login note (`sudo mariadb`).
 - README step 4: rewrote to run the bootstrap script (creates db+user+tables), then copy the PHP config with matching DB_NAME/DB_USER/DB_PASS.
 - `config/local-database-example.php`: set DB_NAME=maludb_auth, DB_USER=maludb to match the script.
+
+## 2026-06-09 — Document API token issuance
+
+**Prompt:** "Do we have in the instructions how the user creates auth tokens for their applications?"
+
+**Finding:** No — the README only showed token *usage* and called them "issued out-of-band," but `POST /v1/tokens` (html/v1/tokens.php) mints them, authorized by proving a working Postgres login (no existing token needed). GET lists, DELETE /v1/tokens/{id} revokes.
+
+**Changes (README.md):**
+- Added "## Issuing API tokens" section: explains the no-token-needed bootstrap (prove a Postgres login), POST create with field table + sample request/response (token shown once), GET list, DELETE revoke — all with curl examples.
+- Step 4: replaced the misleading "issued out-of-band" line with a pointer to the new section.
