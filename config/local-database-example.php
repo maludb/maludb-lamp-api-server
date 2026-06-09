@@ -1,6 +1,12 @@
 <?php
 /**
- * Local Database Configuration (MySQL / MariaDB)
+ * Local Database Configuration (MySQL / MariaDB) — EXAMPLE
+ *
+ * Copy this file to `config/local-database.php` and fill in your local auth-store
+ * credentials. The real `config/local-database.php` is gitignored so secrets never
+ * reach the repo.
+ *
+ *   cp config/local-database-example.php config/local-database.php
  *
  * PDO singleton to the LOCAL auth/routing store. One `users` row per API token carries the
  * user's role and the Postgres connection (DB_NAME / DB_USER / DB_PASS) that requests
@@ -18,10 +24,9 @@ class LocalDatabase {
     // Local MySQL credentials. Host is localhost (the auth store lives on the API box).
     private const DB_HOST = 'localhost';
     private const DB_PORT = '3306';
-    private const DB_NAME = 'maludb';
-    private const DB_USER = 'maludb';
-    // Same password as the Postgres connection in config/database.php (per deployment setup).
-    private const DB_PASS = '!Meelup578Loipol229!';
+    private const DB_NAME = 'YOUR_AUTH_DB_NAME';   // e.g. 'maludb'
+    private const DB_USER = 'YOUR_AUTH_DB_USER';   // e.g. 'maludb'
+    private const DB_PASS = 'YOUR_AUTH_DB_PASSWORD';
 
     private function __construct() {
         try {

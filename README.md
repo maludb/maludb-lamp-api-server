@@ -91,13 +91,20 @@ cd maludb-lamp-api-server
 
 Point Apache's DocumentRoot at `html/` and make sure `AllowOverride All` is set so `.htaccess` is honored.
 
-`config/database.php` holds the **fixed** Postgres host/port; the per-request database name/user/password come from the MySQL auth store. Edit these for your deployment. The production `config/database.php` is meant to be edited in place and is environment-local.
+Copy the example config and fill in your PostgreSQL host/port:
+
+```bash
+cp config/database-example.php config/database.php
+```
+
+`config/database.php` holds the **fixed** Postgres host/port; the per-request database name/user/password come from the MySQL auth store. The real `config/database.php` is gitignored so deployment credentials never reach the repo.
 
 ### 4. Configure the auth store
 
-Create the local MySQL auth/routing store and seed at least one token:
+Copy the example config and fill in your local MySQL credentials, then create the auth/routing store and seed at least one token:
 
 ```bash
+cp config/local-database-example.php config/local-database.php
 mysql your_auth_db < config/local-database.sql
 ```
 

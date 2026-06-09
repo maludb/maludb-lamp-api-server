@@ -1,9 +1,20 @@
 <?php
 /**
- * Database Configuration
+ * Database Configuration — EXAMPLE
  *
- * PDO singleton connection to PostgreSQL database
- * Provides secure, reusable database connection for the application
+ * Copy this file to `config/database.php` and fill in your deployment's
+ * PostgreSQL host/port. The real `config/database.php` is gitignored so
+ * environment-specific values never reach the repo.
+ *
+ *   cp config/database-example.php config/database.php
+ *
+ * Note: the database NAME, USER, and PASSWORD are NOT set here. They are
+ * resolved per request from the local MySQL auth store (keyed by the API
+ * token) and supplied via Database::configure() before the first connection.
+ * See config/local-database.php + require_auth(). Only the host/port are
+ * fixed for the deployment.
+ *
+ * PDO singleton connection to PostgreSQL database.
  */
 
 /**
@@ -28,7 +39,9 @@ class Database {
     // Host/port are fixed for the deployment; the database name, user and password are
     // resolved per-request from the local MySQL auth store (keyed by API token) and supplied
     // via configure() before the first connection. See config/local-database.php + require_auth().
-    private const DB_HOST = '192.168.100.163';
+    //
+    // Set DB_HOST to your PostgreSQL server's hostname or IP for this deployment.
+    private const DB_HOST = 'YOUR_POSTGRES_HOST';   // e.g. '127.0.0.1' or 'db.internal.example.com'
     private const DB_PORT = '5432';
     private static $dbName = null;
     private static $dbUser = null;

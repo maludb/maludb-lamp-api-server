@@ -4,3 +4,8 @@
 
 # Auto-generated Claude Code session transcripts — not for the remote.
 /docs/claude-log/
+
+# Environment-local config with real credentials. Copy the *-example.php
+# templates to these names and fill in your own values. Never commit secrets.
+/config/database.php
+/config/local-database.php
