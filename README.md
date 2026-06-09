@@ -475,4 +475,4 @@ This is the first public release, migrated from a private repository after the i
 
 ## License
 
-To be determined.
+Released under the [MIT License](LICENSE) — © 2026 Edward Honour. Use it, learn from it, and ship it; just keep the copyright notice.

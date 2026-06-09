@@ -1010,3 +1010,12 @@ seed-loop covers the typed coaching verbs. Not run against the live graph (left 
 
 **Changes:**
 - Created `sample-curl/setup-tokens.md` matching the style of the other setup-*.md files (export vars + literal forms, field tables, sample responses, verify, troubleshooting). Covers POST create (authorized by proving a Postgres login, token shown once, jq-capture helper), GET list (metadata only), DELETE revoke. Troubleshooting verified against html/v1/tokens.php + tokens_id.php (400/403 pg_auth_failed/422/404/403 forbidden).
+
+## 2026-06-09 — Add MIT license
+
+**Prompt:** "We have not specified a license, what do you recommend?" — recommended MIT (best fit for a permissive educational reference); user confirmed MIT.
+
+**Changes:**
+- Added `LICENSE` (MIT, © 2026 Edward Honour).
+- README "License" section: replaced "To be determined." with a link to the MIT LICENSE.
+- (No composer.json present, so no license field to set.)
