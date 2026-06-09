@@ -1003,3 +1003,10 @@ seed-loop covers the typed coaching verbs. Not run against the live graph (left 
 **Changes (README.md):**
 - Added "## Issuing API tokens" section: explains the no-token-needed bootstrap (prove a Postgres login), POST create with field table + sample request/response (token shown once), GET list, DELETE revoke — all with curl examples.
 - Step 4: replaced the misleading "issued out-of-band" line with a pointer to the new section.
+
+## 2026-06-09 — Add sample-curl/setup-tokens.md
+
+**Prompt:** "Yes add the new example." (token-issuance worked example for sample-curl/)
+
+**Changes:**
+- Created `sample-curl/setup-tokens.md` matching the style of the other setup-*.md files (export vars + literal forms, field tables, sample responses, verify, troubleshooting). Covers POST create (authorized by proving a Postgres login, token shown once, jq-capture helper), GET list (metadata only), DELETE revoke. Troubleshooting verified against html/v1/tokens.php + tokens_id.php (400/403 pg_auth_failed/422/404/403 forbidden).
