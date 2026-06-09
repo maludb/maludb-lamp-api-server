@@ -109,34 +109,36 @@ df -h /                          # after — should show full capacity
 sudo apt update
 sudo apt upgrade
 ```
-1b. Install Apache, MySQL, PHP, and the database drivers
+1b. Install Apache, MariaDB, PHP, and the database drivers
 
-This is a **LAMP** stack, so you install all four layers here. The server needs **both** database drivers: `php8.3-pgsql` for the MaluDB **data store** (PostgreSQL) and `php8.3-mysql` for the local **auth/routing store** (MySQL). The `mysql-server` package provides the local MySQL engine itself.
+This is a **LAMP** stack, so you install all four layers here. The local auth/routing store runs on **MariaDB** (a drop-in, MySQL-compatible engine — the PHP `pdo_mysql` driver and `mysql:` DSN work unchanged). The server needs **both** database drivers: `php8.3-pgsql` for the MaluDB **data store** (PostgreSQL) and `php8.3-mysql` for the **auth store** (MariaDB).
 ```
 # Apache web server
 sudo apt install apache2 -y
 sudo systemctl enable apache2
 sudo systemctl start apache2
 
-# MySQL server — the local auth/routing store
-sudo apt install mysql-server -y
-sudo systemctl enable mysql
-sudo systemctl start mysql
+# MariaDB — the local auth/routing store (drop-in MySQL replacement)
+sudo apt install mariadb-server -y
+sudo systemctl enable mariadb
+sudo systemctl start mariadb
 
-# PHP 8.3 + Apache module + extensions + BOTH database drivers
-# php8.3-mysql provides pdo_mysql + mysqli; php8.3-pgsql provides pdo_pgsql
-sudo apt install -y \
-  php8.3 libapache2-mod-php8.3 php8.3-cli \
-  php8.3-pgsql php8.3-mysql \
-  php8.3-curl php8.3-gd php8.3-mbstring php8.3-xml php8.3-zip
+# PHP 8.3, the Apache module, and BOTH database drivers
+# php8.3-mysql -> pdo_mysql/mysqli (works with MariaDB); php8.3-pgsql -> pdo_pgsql
+sudo apt install -y php8.3 libapache2-mod-php8.3 php8.3-cli php8.3-pgsql php8.3-mysql
+
+# Common PHP extensions used by the API
+sudo apt install php-mbstring php-zip php-gd php-json php-curl -y
+sudo phpenmod mbstring
+sudo systemctl restart apache2
 ```
 Verify the drivers loaded (both lines should print):
 ```
 php -m | grep -E 'pdo_pgsql|pdo_mysql'
 ```
-1c. Secure the MySQL installation
+1c. Secure the MariaDB installation
 
-The local MySQL server is installed with insecure defaults. Run the interactive hardening script and answer the prompts:
+MariaDB installs with insecure defaults. Run the interactive hardening script and answer the prompts:
 ```
 sudo mysql_secure_installation
 ```
@@ -144,14 +146,15 @@ You will be asked a series of questions. Recommended answers for a development s
 
 | Prompt | Recommended answer |
 |---|---|
-| **Setup VALIDATE PASSWORD component?** | `n` (optional; `y` enforces password complexity rules) |
-| **New password for root** | Set a strong password and record it — you'll need it for the auth store |
-| **Remove anonymous users?** | `y` |
-| **Disallow root login remotely?** | `y` |
-| **Remove test database and access to it?** | `y` |
-| **Reload privilege tables now?** | `y` |
+| **Enter current password for root** | Press **Enter** (none is set on a fresh install) |
+| **Switch to unix_socket authentication?** | `Y` |
+| **Change the root password?** | `n` (optional; with unix_socket auth, local root logs in via `sudo`) |
+| **Remove anonymous users?** | `Y` |
+| **Disallow root login remotely?** | `Y` |
+| **Remove test database and access to it?** | `Y` |
+| **Reload privilege tables now?** | `Y` |
 
-> On Ubuntu 24.04 the MySQL `root` account uses `auth_socket` by default, so locally you connect with `sudo mysql` (no password). The password you set above applies if you later switch `root` to password auth or create application users. Create a **dedicated, non-root MySQL user** for the auth store rather than using `root` in `config/local-database.php`.
+> On Ubuntu 24.04 the MariaDB `root` account uses `unix_socket` auth by default, so locally you connect with `sudo mariadb` (or `sudo mysql`) — no password. Do **not** put `root` in `config/local-database.php`; the bootstrap script in step 4 creates a **dedicated, non-root** application user for the auth store.
 
 1d. Enable PHP, URL rewriting, and restart Apache
 
@@ -311,14 +314,21 @@ cp config/database-example.php config/database.php
 
 ### 4. Configure the auth store
 
-Copy the example config and fill in your local MySQL credentials, then create the auth/routing store and seed at least one token:
+First create the auth/routing store. The bootstrap script [`config/local-database.sql`](config/local-database.sql) creates the **database** (`maludb_auth`), a **dedicated non-root user** (`maludb`), the grants, and the **tables** in one shot. Before running it, open the file and change the placeholder password (`CHANGE_ME_AUTH_DB_PASSWORD`) to a strong value, then run it as the MariaDB root user:
+
+```bash
+# Edit the password in the script first, then:
+sudo mariadb < config/local-database.sql
+```
+
+Now copy the example PHP config and fill in **the same** database name, user, and password you just set in the SQL script:
 
 ```bash
 cp config/local-database-example.php config/local-database.php
-mysql your_auth_db < config/local-database.sql
+# edit config/local-database.php — set DB_NAME=maludb_auth, DB_USER=maludb, DB_PASS=<your password>
 ```
 
-The `users` table maps a token's `sha256` hash to a role and the PostgreSQL `(dbname, user, password)` that requests with that token connect as. Tokens are stored only as hashes (of the token body after the `malu_` prefix) and are issued out-of-band.
+The `users` table maps a token's `sha256` hash to a role and the PostgreSQL `(dbname, user, password)` that requests with that token connect as. Tokens are stored only as hashes (of the token body after the `malu_` prefix) and are issued out-of-band — seed at least one row to make authenticated requests.
 
 ### 5. Make a request
 

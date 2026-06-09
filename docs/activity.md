@@ -982,3 +982,14 @@ seed-loop covers the typed coaching verbs. Not run against the live graph (left 
 - 1e (new): detailed `.htaccess` / `AllowOverride All` instructions for `/var/www/html` (apache home / DocumentRoot), with configtest + reload and a verification note.
 - 1f/1g/1h: renumbered Composer/path/MaluDB-client steps.
 - Step 3 + Requirements: trimmed the duplicate AllowOverride line (points to 1e) and noted MySQL server in requirements.
+
+## 2026-06-09 — Local auth-store bootstrap SQL + switch MySQL→MariaDB
+
+**Prompts:** (1) "We also need an SQL script to create the local tables." (2) Switch mysql to mariadb: mariadb-server, php-* extensions, phpenmod mbstring, restart apache.
+
+**Changes:**
+- `config/local-database.sql`: turned the tables-only script into a self-contained bootstrap — CREATE DATABASE `maludb_auth`, CREATE USER `maludb`@localhost (placeholder password) + GRANT, then the existing `users` + `model_prompts` tables. Run once: `sudo mariadb < config/local-database.sql`.
+- README 1b: switched `mysql-server`→`mariadb-server` (service `mariadb`); noted MariaDB is MySQL-compatible so `pdo_mysql` is unchanged; trimmed the versioned php install to core+drivers and added the user's `php-mbstring php-zip php-gd php-json php-curl` line + `sudo phpenmod mbstring` + restart.
+- README 1c: retitled to "Secure the MariaDB installation"; updated the prompt table to MariaDB's actual prompts (unix_socket auth) and the root-login note (`sudo mariadb`).
+- README step 4: rewrote to run the bootstrap script (creates db+user+tables), then copy the PHP config with matching DB_NAME/DB_USER/DB_PASS.
+- `config/local-database-example.php`: set DB_NAME=maludb_auth, DB_USER=maludb to match the script.

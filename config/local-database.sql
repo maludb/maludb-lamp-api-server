@@ -4,6 +4,32 @@
 -- The token itself is stored only as a sha256 hash (of the token after the `malu_` prefix),
 -- matching how the legacy Postgres api_tokens table hashed it. DB_HOST/DB_PORT stay constant
 -- in config/database.php; only name/user/pass are resolved here.
+--
+-- ----------------------------------------------------------------------------
+-- BOOTSTRAP: this script creates the local auth store from scratch — the
+-- database, a dedicated (non-root) application user, the grants, and the tables.
+-- Run it ONCE as the MySQL root user on a fresh install:
+--
+--     sudo mysql < config/local-database.sql
+--
+-- IMPORTANT: the database name, user, and password below MUST match the
+-- DB_NAME / DB_USER / DB_PASS constants in config/local-database.php.
+-- Change the placeholder password before running — never ship the default.
+-- ----------------------------------------------------------------------------
+
+-- 1. Database --------------------------------------------------------------
+CREATE DATABASE IF NOT EXISTS maludb_auth
+    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 2. Dedicated application user (do NOT use root in config/local-database.php).
+--    Change the password, then mirror it into config/local-database.php.
+CREATE USER IF NOT EXISTS 'maludb'@'localhost'
+    IDENTIFIED BY 'CHANGE_ME_AUTH_DB_PASSWORD';
+GRANT SELECT, INSERT, UPDATE, DELETE ON maludb_auth.* TO 'maludb'@'localhost';
+FLUSH PRIVILEGES;
+
+-- 3. Tables ----------------------------------------------------------------
+USE maludb_auth;
 
 CREATE TABLE IF NOT EXISTS users (
     id          INT AUTO_INCREMENT PRIMARY KEY,

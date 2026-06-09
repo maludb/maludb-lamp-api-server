@@ -24,9 +24,9 @@ class LocalDatabase {
     // Local MySQL credentials. Host is localhost (the auth store lives on the API box).
     private const DB_HOST = 'localhost';
     private const DB_PORT = '3306';
-    private const DB_NAME = 'YOUR_AUTH_DB_NAME';   // e.g. 'maludb'
-    private const DB_USER = 'YOUR_AUTH_DB_USER';   // e.g. 'maludb'
-    private const DB_PASS = 'YOUR_AUTH_DB_PASSWORD';
+    private const DB_NAME = 'maludb_auth';          // must match config/local-database.sql
+    private const DB_USER = 'maludb';               // the dedicated user created by that script
+    private const DB_PASS = 'YOUR_AUTH_DB_PASSWORD'; // the password you set in that script
 
     private function __construct() {
         try {
