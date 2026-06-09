@@ -946,3 +946,19 @@ set up subject types and verb types ("explore how to do that").
 
 **Verified:** bash seed-loop syntax (pipe-split) parses; owner SQL columns/constraints valid; verb
 seed-loop covers the typed coaching verbs. Not run against the live graph (left to the user).
+
+---
+
+## 2026-06-09 — Add Maludb-Dev-Setup.md
+
+**Prompt:** User pasted a draft Ubuntu 24.04 install guide (Apache, PHP, Postgres drivers, MaluDB PHP SDK, Node/Claude Code) and asked to analyze it and produce a specific, educational setup doc.
+
+**Changes:**
+- Created `Maludb-Dev-Setup.md` (repo root) from the draft, with corrections:
+  - 1a: added `resize2fs` / `lvextend -r` so the filesystem actually grows after `lvextend`; added `df -h` checks.
+  - 1b: added `-y` to `apt upgrade`.
+  - 2: merged the two overlapping php `apt install` lines into one; kept both `php8.3-pgsql` (data) and `php8.3-mysql` (auth) with an explanatory note.
+  - 2c (new): enable `mod_rewrite` + `AllowOverride All` for `/var/www/html` since the repo relies on `.htaccess` URL rewrites.
+  - 3b: relabeled the PATH line as Composer's *global* bin (`~/.config/composer/vendor/bin`); 3c notes running `composer require` inside `/var/www`.
+  - 4/5: added verification commands, expected test-pdo output, troubleshooting, and a security note to delete the test script.
+- Added `tasks/setup-doc-plan.md` plan/checklist.
