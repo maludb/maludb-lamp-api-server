@@ -764,6 +764,8 @@ function handle_uncaught(Throwable $e): void {
             ? (string) $e->errorInfo[0]
             : substr((string) $e->getCode(), 0, 5);
         switch ($sqlstate) {
+            case '23000':                       // integrity_constraint_violation (e.g. the 0.97.0
+                                                // agent-skill content-guard trigger)
             case '23505':                       // unique_violation
                 $status = 409; $code = 'conflict';          $message = pg_error_message($e); break;
             case '42501':                       // insufficient_privilege

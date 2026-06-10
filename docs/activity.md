@@ -1030,3 +1030,53 @@ seed-loop covers the typed coaching verbs. Not run against the live graph (left 
 - `README.md`: added a "Supported MaluDB version: maludb_core 0.96.0" callout near the top (with the enable_memory_schema re-run note).
 - Stored-prompt update path: re-run `php tests/local_db_setup.php` (reads the .txt, preserves api_key) or POST /v1/model-prompts.
 - Flagged (not changed): config/llm.php mem_default_prompt() hardcodes person|software|project|other — separate legacy fallback, different contract.
+
+## 2026-06-10 — Agent-skill distribution (maludb_core 0.97.0)
+
+**Prompt:** Implement the agent-skill distribution feature (port of the Python reference
+implementation's feat/agent-skill-ingest branch): POST /v1/skills/ingest, GET /v1/skills/{id}/bundle,
+tag-aware GET /v1/skills?subject=/?verb=, PATCH content-immutability guard, mirroring the Python
+HTTP contract exactly.
+
+**Changes:**
+- `config/skills.php` (new): pure-helper port of the Python `app/helpers/skills.py` —
+  `skill_file_sha256`, `skill_bundle_hash` (sha256 over the SORTED `"<hash>  <path>\n"` lines),
+  `skill_materiality_screens` (material frontmatter keys / non-SKILL.md file diffs → material;
+  whitespace-only SKILL.md change → non_material; body change alone → gray),
+  `skill_deterministic_discovery` (stopword-filtered name+description keywords, cap 24),
+  `skill_coerce_extraction` (forces the agent_skill document section + a type-'skill' subject).
+- `config/prompts/skill-extract.system.txt` (new): seed SYSTEM prompt for a `model_prompts`
+  row (skill → discovery-JSON extraction; {{ENTITY_TYPES}}/{{EVENT_KINDS}} placeholders).
+- `html/v1/skills_ingest.php` (new): POST /v1/skills/ingest modeled on memory_ingest.php —
+  decode/validate files (422 unsafe path/bad base64/duplicate; 413 >5MB file />30MB bundle;
+  SKILL.md synthesized from `markdown`), canonical bundle hash, pg_proc check (501
+  ingest_unavailable without maludb_skill_register), idempotent re-push (200 reused:true),
+  parent resolution (explicit {owner_schema,skill_id} else newest enabled same-name),
+  materiality (caller override > deterministic screens > LLM judge with any-failure→material),
+  discovery extraction (per-model prompt + catalog render like memory/ingest, or the
+  deterministic no-credential fallback; preview returns prompt/extraction without writing),
+  then ONE db_tx_core(): maludb_memory_ingest_extraction → content-hash-deduped skill_file
+  source packages (bytea via PDO::PARAM_LOB on the raw handle + manual sql_log with a
+  '<N bytes>' placeholder, per the documents.php precedent) → maludb_skill_register.
+- `html/v1/skills_id_bundle.php` (new): GET /v1/skills/{id}/bundle — skill row + every file
+  base64-encoded (bytea arrives as a stream resource → stream_get_contents); legacy
+  markdown-only skills synthesize a one-file SKILL.md bundle.
+- `html/v1/skills.php`: GET grows `subject`/`verb` params → maludb_skill_search(q, subject,
+  verb, NULL, limit) with to_jsonb() on the array/record columns; plain list path unchanged.
+- `html/v1/skills_id.php`: PATCH existence check now reads bundle_hash; content fields
+  (name/markdown/version/packaging_kind) on a registered agent skill → 409 skill_content_immutable.
+- `config/response.php`: handle_uncaught() maps SQLSTATE 23000 (integrity_constraint_violation —
+  the 0.97.0 content-guard trigger) → 409 conflict.
+- `html/.htaccess`: `^v1/skills/ingest$` → skills_ingest.php (before the numeric-id rules).
+- Tests/docs: tests/skills_ingest_curls.sh + tests/skills_id_bundle_curls.sh (new),
+  tests/skills_curls.sh subject/verb examples, requirements.md §4.8 endpoint table,
+  README supported-version bump 0.96.0 → 0.97.0.
+
+**Validation:** `php -l` clean on all changed files. Throwaway helper harness: 22/22 checks
+matching tests/test_skill_helpers.py incl. the canonical hash cross-check
+(sha256(sha256('hello') + '  SKILL.md\n')). Throwaway end-to-end harness against a PG17
+scratch DB enabled at 0.97.0 (PDO direct, simulating the ingest tx): 26/26 — register,
+idempotent re-push lookup, parent/materiality query (malu$skill_package/malu$skill_file),
+supersede (parent disabled) vs material coexist, bundle read-back (stream resource, hashes,
+recomputed bundle hash), maludb_skill_search by subject/q. Content-guard UPDATE confirmed to
+raise SQLSTATE 23000. Harnesses deleted before commit.

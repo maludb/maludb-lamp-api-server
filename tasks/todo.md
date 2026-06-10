@@ -957,3 +957,32 @@ OPEN QUESTIONS (blocking):
 - README: added "Supported MaluDB version: maludb_core 0.96.0" note near the top.
 - Out of scope / flagged: config/llm.php mem_default_prompt() still hardcodes
   "person|software|project|other" — separate legacy candidate_edges fallback, not this path.
+
+---
+
+## 0.97.0 — agent-skill distribution (done)
+
+- [x] config/skills.php: port app/helpers/skills.py (bundle hash, materiality screens,
+      deterministic discovery, extraction coercion) as pure functions.
+- [x] config/prompts/skill-extract.system.txt: seed copy of the skill-extraction SYSTEM prompt.
+- [x] html/v1/skills_ingest.php: POST /v1/skills/ingest (files → hash → 501 guard → idempotent
+      re-push → parent → materiality → discovery/preview → one-tx ingest+LOB packages+register).
+- [x] html/v1/skills_id_bundle.php: GET /v1/skills/{id}/bundle (base64 files; legacy fallback).
+- [x] html/v1/skills.php: ?subject=/?verb= branch via maludb_skill_search.
+- [x] html/v1/skills_id.php: PATCH 409 skill_content_immutable guard on bundle_hash skills.
+- [x] config/response.php: SQLSTATE 23000 → 409 conflict.
+- [x] html/.htaccess: /v1/skills/ingest rewrite before the numeric-id rules.
+- [x] tests: skills_ingest_curls.sh, skills_id_bundle_curls.sh, skills_curls.sh subject/verb.
+- [x] docs: requirements.md §4.8 table, README version bump, activity log.
+
+### 0.97.0 — Review
+- HTTP contract mirrors the Python reference (app/routers/skills.py) exactly: field names,
+  error codes (missing_field/validation_failed/payload_too_large/ingest_unavailable/
+  model_not_configured/model_api_key_missing/upstream_error/skill_content_immutable),
+  status codes (400/409/413/422/501/502, 200 reused, 201 registered).
+- bytea writes go through PDO::PARAM_LOB on the raw handle with a byte-redacted manual
+  sql_log (documents.php precedent) — raw bytes never flow through db_query/db_one/db_exec.
+- The gray-zone LLM judge uses a direct cURL call (not llm_complete) so any judge failure
+  degrades to materially_different=true instead of terminating the request via json_error.
+- Validated with php -l (clean) + two throwaway harnesses (22/22 helper checks incl. the
+  canonical-hash cross-check; 26/26 end-to-end DB checks on a 0.97.0-enabled PG17 scratch DB).

@@ -11,6 +11,22 @@ curl -s -X GET 'https://fastapi.maludb.org/v1/skills?visibility=private' \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
     -H 'Accept: application/json'
 
+# --- GET tag-aware discovery (0.97.0): ?subject= / ?verb= route through maludb_skill_search
+#     -> 200 {"skills":[ {owner_schema,id,name,description,version,visibility,subjects,verbs,
+#                         keywords,score,match_reasons,is_public,is_forkable,
+#                         source_owner_schema,source_skill_id,updated_at} ]}
+curl -s -X GET 'https://fastapi.maludb.org/v1/skills?subject=pdf%20file' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+curl -s -X GET 'https://fastapi.maludb.org/v1/skills?verb=extract' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+
+# --- GET combined q + subject (q feeds the keyword/tsquery rails of the same search) -> 200
+curl -s -X GET 'https://fastapi.maludb.org/v1/skills?q=pdf&subject=pdf%20file&limit=10' \
+    -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \
+    -H 'Accept: application/json'
+
 # --- POST missing name -> 400 missing_field
 curl -s -X POST 'https://fastapi.maludb.org/v1/skills' \
     -H 'Authorization: Bearer malu_devLOCALdevLOCALdevLOCALdevLOCALdevLOCAL123' \

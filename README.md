@@ -7,7 +7,7 @@ A deliberately small PHP JSON API server for **[MaluDB](https://maludb.com)** th
 
 > **The #1 design goal is SQL traceability.** A router obscures *which file ran*; an ORM obscures *which SQL ran*. This project trades the usual DRY conveniences for a direct line of sight: **URL → file → SQL.**
 
-> **Supported MaluDB version: `maludb_core` 0.96.0.** The extraction prompt is rendered from the subject-type catalog (`maludb_subject_type`, with its 0.96.0 `category` column). After upgrading the extension, each tenant schema must re-run `SELECT maludb_core.enable_memory_schema('<tenant>');` once so the catalog facade exposes `category`.
+> **Supported MaluDB version: `maludb_core` 0.97.0.** The extraction prompt is rendered from the subject-type catalog (`maludb_subject_type`, with its 0.96.0 `category` column), and agent-skill distribution (`POST /v1/skills/ingest`, `GET /v1/skills/{id}/bundle`, tag-aware `GET /v1/skills?subject=&verb=`) uses the 0.97.0 `maludb_skill_register`/`maludb_skill_search` facades. After upgrading the extension, each tenant schema must re-run `SELECT maludb_core.enable_memory_schema('<tenant>');` once so the facades are current.
 
 ---
 

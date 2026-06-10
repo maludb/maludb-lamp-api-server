@@ -7,6 +7,9 @@
  *   DELETE  Remove the skill.
  *
  * name -> skill_name. DB enforces visibility/packaging_kind value sets (→ 422).
+ * Registered agent skills (bundle_hash set, maludb_core 0.97.0) are content-immutable:
+ * PATCH rejects name/markdown/version/packaging_kind with 409 skill_content_immutable
+ * (re-upload via POST /v1/skills/ingest); description/visibility/enabled stay editable.
  */
 
 require_once __DIR__ . '/../../config/response.php';
@@ -41,11 +44,33 @@ switch ($_SERVER['REQUEST_METHOD']) {
     }
 
     case 'PATCH': {
-        if (db_one("SELECT 1 FROM maludb_skill WHERE skill_id = ?", [$id]) === null) {
+        $row = db_one("SELECT bundle_hash FROM maludb_skill WHERE skill_id = ?", [$id]);
+        if ($row === null) {
             json_error('not_found', 'Skill not found.', 404);
         }
 
         $body   = body_json();
+
+        // Registered agent skills (bundle_hash set, 0.97.0) are content-immutable (a DB
+        // trigger enforces this too); a changed bundle must be re-ingested as a new skill
+        // version via POST /v1/skills/ingest. Lifecycle fields stay editable.
+        if ($row['bundle_hash'] !== null && $row['bundle_hash'] !== '') {
+            $blocked = array_values(array_filter(
+                ['name', 'markdown', 'version', 'packaging_kind'],
+                fn($f) => array_key_exists($f, $body)
+            ));
+            if ($blocked !== []) {
+                json_error(
+                    'skill_content_immutable',
+                    'Fields ' . implode(', ', $blocked)
+                    . ' are immutable on a registered agent skill; re-upload the changed bundle'
+                    . ' via POST /v1/skills/ingest (it becomes a new version with fork lineage).'
+                    . ' Editable here: description, visibility, enabled.',
+                    409
+                );
+            }
+        }
+
         $fields = [];
         $params = [];
 
