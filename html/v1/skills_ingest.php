@@ -15,8 +15,9 @@
  *   3. resolve the parent (explicit, else the newest enabled same-name skill) and decide
  *      materiality: caller override > deterministic screens > LLM judge (gray zone),
  *   4. extract discovery subjects/verbs/keywords — via the configured per-model prompt
- *      (model_prompts, like /v1/memory/ingest) or a deterministic frontmatter-only fallback
- *      that needs no credentials,
+ *      (explicit `model` against model_prompts/the seeded catalog, or the user's stored
+ *      'skill_extract' choice — like /v1/memory/ingest) or a deterministic frontmatter-only
+ *      fallback that needs no credentials,
  *   5. ONE transaction: maludb_memory_ingest_extraction (graph), content-hash-deduped
  *      skill_file source packages (bytea via PDO::PARAM_LOB), maludb_skill_register.
  *
@@ -35,7 +36,7 @@ require_once __DIR__ . '/../../config/skills.php';
 const SKILL_MAX_FILE_BYTES   = 5 * 1024 * 1024;
 const SKILL_MAX_BUNDLE_BYTES = 30 * 1024 * 1024;
 
-require_auth();
+$user_id = require_auth();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Allow: POST');
@@ -299,7 +300,7 @@ if ($parent_id !== null) {
     } elseif ($materiality['verdict'] === 'non_material') {
         $materially_different = false;
     } else {   // gray zone: SKILL.md body changed, nothing else did
-        $pr_judge = $model !== null ? LocalDatabase::modelPrompt($model) : null;
+        $pr_judge = mem_resolve_task_config($user_id, 'skill_extract', $model);
         if ($pr_judge !== null && ($pr_judge['api_key'] ?? null) !== null && $pr_judge['api_key'] !== '') {
             $materially_different     = skill_judge_materiality($pr_judge, (string) ($parent_row['markdown'] ?? ''), $markdown, $name);
             $materiality['reasons'][] = 'llm_judged';
@@ -311,15 +312,17 @@ if ($parent_id !== null) {
     $materiality['materially_different'] = $materially_different;
 }
 
-// Discovery extraction: LLM when a model is given, else the deterministic
+// Discovery extraction: LLM when a model is configured (explicit `model`, or the user's
+// stored 'skill_extract' choice — PUT /v1/llm/models/skill_extract), else the deterministic
 // frontmatter-only fallback (no credentials needed).
 $frontmatter_json = $frontmatter === [] ? '{}' : json_encode($frontmatter, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 $extraction = null;
-if ($model !== null) {
-    $pr = LocalDatabase::modelPrompt($model);
-    if ($pr === null) {
-        json_error('model_not_configured', 'No prompt configured for model "' . $model . '". Set one via POST /v1/model-prompts.', 422);
-    }
+$pr = mem_resolve_task_config($user_id, 'skill_extract', $model);
+if ($model !== null && $pr === null) {
+    json_error('model_not_configured', 'No prompt configured for model "' . $model . '". Set one via POST /v1/model-prompts.', 422);
+}
+if ($pr !== null) {
+    $model = ($pr['model_name'] ?? '') !== '' && $pr['model_name'] !== null ? (string) $pr['model_name'] : $model;
 
     // SUBJECT TYPE CATALOG (0.96.0): render the entity/event vocabularies straight from the
     // tenant catalog (same as /v1/memory/ingest) so the prompt's allowed types never drift.
@@ -359,8 +362,14 @@ if ($model !== null) {
             'parent'        => ['owner_schema' => $parent_schema, 'skill_id' => $parent_id, 'note' => $parent_note],
         ]);
     }
-    if ($pr['api_key'] === null || $pr['api_key'] === '') {
-        json_error('model_api_key_missing', 'No API key set for model "' . $model . '".', 409);
+    if (($pr['api_key'] ?? null) === null || $pr['api_key'] === '') {
+        if (in_array($pr['source'] ?? null, ['catalog_explicit', 'user_choice'], true)) {
+            $msg = 'No API key stored for provider "' . ($pr['provider'] ?? '') . '".'
+                 . ' Set one via PUT /v1/llm/providers/' . ($pr['provider'] ?? '') . '.';
+        } else {
+            $msg = 'No API key set for model "' . $model . '".';
+        }
+        json_error('model_api_key_missing', $msg, 409);
     }
 
     $cfg = [

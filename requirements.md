@@ -539,6 +539,34 @@ live in `config/llm.php` (`llm_complete` dispatches on `api_format`).
 > endpoint accepts pre-extracted `edges`, so upload→ingest→search round-trips without live models.
 > Async path (`request_extraction`/`harvest_extractions`) exists but is out of scope (no worker).
 
+### 4.14 Per-user LLM configuration — /v1/llm/* (seeded catalog, provider keys, model choices)
+
+`tests/local_db_setup.php` seeds a `default_prompts` catalog in MySQL (one row per model × task —
+OpenAI, Anthropic, Google, xAI, DeepSeek, Ollama; tasks `extract` / `skill_extract` / `embed`;
+prompts from `config/prompts/extract.rich.system.txt` / `extract.simple.system.txt` /
+`skill-extract.system.txt`; `INSERT IGNORE`, so re-running never overwrites operator edits). A
+bearer-token holder then only stores a provider key and picks a model per task — no raw Postgres
+credentials (unlike `/v1/model-prompts`). Keys and choices are keyed by `user_id` (all of a
+user's tokens share them) in `user_provider_keys` / `user_model_choices`.
+
+| URL | File | Methods | Notes |
+|---|---|---|---|
+| `/v1/llm/catalog` | `llm_catalog.php` | GET | The seeded models × tasks with the caller's state (`key_set`, `is_choice`). Prompt text not returned (only `has_system_prompt`). |
+| `/v1/llm/providers` | `llm_providers.php` | GET | The caller's stored providers — the key value is **never** returned, only `key_set`. |
+| `/v1/llm/providers/{provider}` | `llm_providers.php` | PUT, DELETE | PUT `{api_key, base_url?}` — `api_key` required on first set (400); omitted on update preserves the stored key (COALESCE, like `/v1/model-prompts`); unknown provider → 422 listing the known ones. DELETE → 404 when none stored. |
+| `/v1/llm/models` | `llm_models.php` | GET | One entry per task with the **effective** model; `chosen:false` rows show the legacy/server default (`chatgpt-4o` for extract; null for skill_extract/embed). |
+| `/v1/llm/models/{task}` | `llm_models.php` | PUT, DELETE | PUT `{model_name, system_prompt?}` — `(model_name, task)` must exist in the catalog (422 → see GET /v1/llm/catalog); allowed before a key is stored (the response carries a `warning`). DELETE reverts to the server default (404 when no row). |
+
+The pipelines resolve their model via `mem_resolve_task_config()` (config/llm.php), in order:
+**explicit `model` in the body** (legacy `model_prompts` row first — byte-for-byte today's
+behavior — then the catalog row + the caller's provider key) → **the user's choice**
+(`user_model_choices` + key, with optional per-user system-prompt/base_url overrides) → **null**,
+upon which each endpoint keeps its exact legacy fallback (the `chatgpt-4o` model_prompts row +
+namespace config for `/v1/memory/ingest`; deterministic discovery for `/v1/skills/ingest`;
+env/deterministic embedding via `mem_resolve_embed_config()` for documents/search). A missing
+provider key on a catalog-resolved model → **409 `model_api_key_missing`** pointing at
+`PUT /v1/llm/providers/{provider}`. Regression curls: `tests/llm_config_curls.sh`.
+
 ### 4.10 List denormalization
 
 To avoid N+1 calls from the client, list endpoints embed **count** fields in each row;

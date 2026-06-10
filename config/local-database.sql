@@ -62,3 +62,46 @@ CREATE TABLE IF NOT EXISTS model_prompts (
     created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Seeded catalog of default model configurations, one row per (model, task).
+-- Seeded by tests/local_db_setup.php (INSERT IGNORE — re-seeding never overwrites a row an
+-- operator hand-edited). No api_key here: users attach their own provider keys in
+-- user_provider_keys.
+CREATE TABLE IF NOT EXISTS default_prompts (
+    id                INT          AUTO_INCREMENT PRIMARY KEY,
+    provider          VARCHAR(64)  NOT NULL,                  -- 'openai' | 'anthropic' | 'google' | 'xai' | 'deepseek' | 'ollama'
+    model_name        VARCHAR(128) NOT NULL,                  -- lookup key (the `model` request value / choice value)
+    model_identifier  VARCHAR(128) NOT NULL,                  -- actual API model id (e.g. 'gpt-4o')
+    api_format        VARCHAR(16)  NOT NULL DEFAULT 'openai', -- 'openai' | 'anthropic'
+    base_url          VARCHAR(255) NOT NULL,
+    task              VARCHAR(64)  NOT NULL,                  -- 'extract' | 'skill_extract' | 'embed' (free string)
+    system_prompt     MEDIUMTEXT   NULL,                      -- NULL for 'embed' rows
+    max_tokens        INT          NOT NULL DEFAULT 2048,
+    generation_params JSON         NULL,                      -- merged into the request body
+    created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_default_prompts_model_task (model_name, task)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- One LLM provider API key per user. Config is keyed by user_id (not token): a user may hold
+-- several tokens that all share the same provider keys.
+CREATE TABLE IF NOT EXISTS user_provider_keys (
+    user_id    INT          NOT NULL,
+    provider   VARCHAR(64)  NOT NULL,
+    api_key    VARCHAR(255) NOT NULL,
+    base_url   VARCHAR(255) NULL,                             -- optional per-user override (e.g. self-hosted ollama)
+    created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, provider)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- The user's model choice per task, with an optional system-prompt override.
+CREATE TABLE IF NOT EXISTS user_model_choices (
+    user_id       INT          NOT NULL,
+    task          VARCHAR(64)  NOT NULL,
+    model_name    VARCHAR(128) NOT NULL,                      -- must exist in default_prompts for this task
+    system_prompt MEDIUMTEXT   NULL,                          -- NULL = use the catalog prompt
+    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, task)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

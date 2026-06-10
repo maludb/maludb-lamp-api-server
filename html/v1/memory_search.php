@@ -14,7 +14,7 @@
 
 require_once __DIR__ . '/../../config/response.php';
 
-require_auth();
+$user_id = require_auth();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Allow: POST');
@@ -37,14 +37,15 @@ if ($subject === null && $verb === null) {
 $limit     = isset($body['limit']) ? max(1, min(200, (int) $body['limit'])) : 20;
 $metric    = isset($body['metric']) && trim((string) $body['metric']) !== '' ? (string) $body['metric'] : 'cosine';
 
-// Same embedding model as ingest (from namespace config, else body/env/deterministic).
-$row = db_tx_core(fn() => db_one("SELECT maludb_memory_model_config(?) AS cfg", [$namespace]));
-$cfg = ($row && $row['cfg'] !== null) ? (array) json_decode($row['cfg'], true) : [];
+// Same embedding model (and precedence) as document ingest:
+// body > namespace config > the user's 'embed' choice > env default.
+$cfg        = mem_namespace_config($namespace);
+$user_embed = mem_resolve_embed_config($user_id);
 $embedding_model = isset($body['embedding_model']) && trim((string) $body['embedding_model']) !== ''
     ? (string) $body['embedding_model']
-    : ($cfg['embedding_model'] ?? (getenv('MALUDB_EMBED_MODEL') ?: 'maludb-local-dev'));
+    : (($cfg['embedding_model'] ?? '') ?: (($user_embed['embedding_model'] ?? '') ?: (getenv('MALUDB_EMBED_MODEL') ?: 'maludb-local-dev')));
 
-$vector = mem_vector_literal(mem_embed($query, ['embedding_model' => $embedding_model]));
+$vector = mem_vector_literal(mem_embed($query, array_merge($user_embed, ['embedding_model' => $embedding_model])));
 
 $rows = db_tx_core(fn() => db_query(
     "SELECT chunk_id, statement_id, document_id, source_text, distance, similarity,

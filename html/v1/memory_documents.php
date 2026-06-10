@@ -8,8 +8,13 @@
  *
  *   Body: { title (req), text (req), source_type='document', media_type?, document_type?,
  *           projects?[], subjects?[], verbs?[], events?[], metadata?{}, namespace='default',
- *           embedding_model?, chunk?:{max,overlap},
+ *           embedding_model?, model?, chunk?:{max,overlap},
  *           edges?[] }    // optional pre-extracted candidate_edges → bypass the LLM call
+ *
+ *   Extraction connection: the namespace config (Store A) first; else borrowed from Store B
+ *   (explicit `model` → the user's 'extract' choice → the legacy 'chatgpt-4o' model_prompts
+ *   row) — connection only, the candidate_edges prompt_template never crosses over. Embedding
+ *   model precedence: body > namespace config > the user's 'embed' choice > env default.
  *
  *   Pipeline: read config → chunk (in code) → extract (LLM, or use body.edges) → embed each
  *   edge → ONE db_tx_core(): maludb_upload_document(...) then maludb_memory_ingest_edge(...) per
@@ -22,7 +27,7 @@
 
 require_once __DIR__ . '/../../config/response.php';
 
-require_auth();
+$user_id = require_auth();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Allow: POST');
@@ -56,27 +61,71 @@ $events   = $to_text_array($body['events'] ?? null);
 $chunk_max     = isset($body['chunk']['max']) ? max(200, (int) $body['chunk']['max']) : 2000;
 $chunk_overlap = isset($body['chunk']['overlap']) ? max(0, (int) $body['chunk']['overlap']) : 200;
 
-// --- config (may be empty if no model is bound yet) ---
-$row = db_tx_core(fn() => db_one("SELECT maludb_memory_model_config(?) AS cfg", [$namespace]));
-$cfg = ($row && $row['cfg'] !== null) ? (array) json_decode($row['cfg'], true) : [];
+// --- config — Store A (namespace) is primary here (may be empty if no model is bound yet) ---
+$cfg = mem_namespace_config($namespace);
 
+// Embedding model precedence: body > namespace config > the user's 'embed' choice > env default.
+$user_embed = mem_resolve_embed_config($user_id);
 $embedding_model = isset($body['embedding_model']) && trim((string) $body['embedding_model']) !== ''
     ? (string) $body['embedding_model']
-    : ($cfg['embedding_model'] ?? (getenv('MALUDB_EMBED_MODEL') ?: 'maludb-local-dev'));
+    : (($cfg['embedding_model'] ?? '') ?: (($user_embed['embedding_model'] ?? '') ?: (getenv('MALUDB_EMBED_MODEL') ?: 'maludb-local-dev')));
 $default_subject = $cfg['default_subject_type'] ?? 'other';
 $default_prov    = $cfg['default_provenance'] ?? 'suggested';
-$model_id        = $cfg['model_identifier'] ?? '';
 
-// extraction config for the (real) LLM call
-$extract_cfg = [
-    'base_url'          => $cfg['base_url'] ?? '',
-    'model_identifier'  => $model_id,
-    'prompt_template'   => $cfg['prompt_template'] ?? null,
-    'generation_params' => $cfg['generation_params'] ?? [],
-    'token'             => mem_resolve_token($cfg['secret_ref'] ?? null),
-];
-// embedding config (embedding endpoint comes from env; DB config carries only the model label)
-$embed_cfg = ['embedding_model' => $embedding_model];
+// Extraction connection: Store A (namespace) first, else borrow from Store B (model_prompts /
+// the per-user resolver) so a tenant that only configured /v1/memory/ingest can still extract
+// here. The candidate_edges contract (prompt_template) is never taken from Store B — its
+// prompt targets a different contract.
+if (mem_has_llm_connection($cfg)) {
+    $extract_cfg = [
+        'api_format'        => 'openai',
+        'base_url'          => $cfg['base_url'] ?? '',
+        'model_identifier'  => $cfg['model_identifier'] ?? '',
+        'prompt_template'   => $cfg['prompt_template'] ?? null,
+        'generation_params' => $cfg['generation_params'] ?? [],
+        'max_tokens'        => 2048,
+        'token'             => mem_resolve_token($cfg['secret_ref'] ?? null),
+    ];
+} else {
+    // Borrow a connection from Store B: explicit model → the user's 'extract' choice → the
+    // legacy 'chatgpt-4o' model_prompts row. Only the connection crosses over — the
+    // candidate_edges contract (prompt_template) never comes from Store B.
+    $fb_model = isset($body['model']) && trim((string) $body['model']) !== '' ? trim((string) $body['model']) : null;
+    $pr = mem_resolve_task_config($user_id, 'extract', $fb_model);
+    if ($pr === null) {
+        $pr = LocalDatabase::modelPrompt($fb_model ?? 'chatgpt-4o');
+    }
+    if ($pr !== null && trim((string) ($pr['base_url'] ?? '')) !== '') {
+        $extract_cfg = [
+            'api_format'        => $pr['api_format'] ?? 'openai',
+            'base_url'          => $pr['base_url'] ?? '',
+            'model_identifier'  => ($pr['model_identifier'] ?? '') !== '' && $pr['model_identifier'] !== null
+                ? $pr['model_identifier'] : (string) ($pr['model_name'] ?? ''),
+            'prompt_template'   => $cfg['prompt_template'] ?? null,   // default candidate_edges template
+            'generation_params' => (($pr['generation_params'] ?? null) !== null && $pr['generation_params'] !== '')
+                ? json_decode((string) $pr['generation_params'], true) : [],
+            'max_tokens'        => (int) ($pr['max_tokens'] ?? 2048),
+            'token'             => $pr['api_key'] ?? null,
+        ];
+    } else {
+        // Neither store configured — only caller-supplied "edges" can be ingested;
+        // mem_extract (if reached) errors model_not_configured.
+        $extract_cfg = [
+            'api_format'        => 'openai',
+            'base_url'          => '',
+            'model_identifier'  => '',
+            'prompt_template'   => $cfg['prompt_template'] ?? null,
+            'generation_params' => $cfg['generation_params'] ?? [],
+            'max_tokens'        => 2048,
+            'token'             => mem_resolve_token($cfg['secret_ref'] ?? null),
+        ];
+    }
+}
+
+$model_id = (string) ($extract_cfg['model_identifier'] ?? '');
+// embedding config — the user's stored embed connection (if any), with the resolved
+// embedding_model name on top.
+$embed_cfg = array_merge($user_embed, ['embedding_model' => $embedding_model]);
 
 // --- 1. obtain candidate edges: caller-supplied (bypass) OR LLM extraction per chunk ---
 $provided = is_array($body['edges'] ?? null) ? $body['edges'] : null;

@@ -2,8 +2,13 @@
 /**
  * /v1/memory/ingest  (text → LLM extraction → memory ingest; per-model prompt, OpenAI + Anthropic)
  *
- *   POST  Body: { text (required), model? (default 'chatgpt-4o'), hints? (array of
+ *   POST  Body: { text (required), model?, hints? (array of
  *                 {"subject-type","subject-name"}), namespace?, preview? }
+ *
+ *   Model resolution order: explicit `model` (legacy model_prompts first, then the seeded
+ *   default_prompts catalog + the caller's provider key) → the user's 'extract' choice
+ *   (PUT /v1/llm/models/extract) → the legacy default (the 'chatgpt-4o' model_prompts row) →
+ *   the namespace config (Store A; connection only, paired with the default ingest prompt).
  *
  *   Contract (per the GPT-4o memory-extraction prompt): the model is given the stored SYSTEM
  *   prompt + a USER message built from the TEXT, the HINTS, and the schema's current
@@ -18,7 +23,7 @@
 
 require_once __DIR__ . '/../../config/response.php';
 
-require_auth();
+$user_id = require_auth();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Allow: POST');
@@ -30,8 +35,8 @@ $body = body_json();
 $text = isset($body['text']) ? (string) $body['text'] : '';
 if (trim($text) === '') json_error('missing_field', 'Field "text" is required.', 400);
 
-$model     = isset($body['model']) && trim((string) $body['model']) !== '' ? (string) $body['model'] : 'chatgpt-4o';
-$namespace = isset($body['namespace']) && trim((string) $body['namespace']) !== '' ? (string) $body['namespace'] : 'default';
+$explicit_model = isset($body['model']) && trim((string) $body['model']) !== '' ? trim((string) $body['model']) : null;
+$namespace      = isset($body['namespace']) && trim((string) $body['namespace']) !== '' ? (string) $body['namespace'] : 'default';
 $preview   = !empty($body['preview']);
 
 // HINTS: a list of {"subject-type","subject-name"}. Accept an array (preferred); tolerate a
@@ -45,10 +50,40 @@ if (isset($body['hints']) && is_array($body['hints'])) {
     $hints_json = '[]';
 }
 
-// --- per-model prompt + LLM connection (MySQL) ---
-$pr = LocalDatabase::modelPrompt($model);
+// --- per-model prompt + LLM connection. Resolution order: explicit model (legacy
+//     model_prompts first, then the seeded catalog + the user's provider key) → the user's
+//     'extract' choice → the legacy default ('chatgpt-4o' model_prompts row) → the namespace
+//     config (Store A). ---
+$pr    = mem_resolve_task_config($user_id, 'extract', $explicit_model);
+$model = $pr !== null ? (string) $pr['model_name'] : ($explicit_model ?? 'chatgpt-4o');
 if ($pr === null) {
-    json_error('model_not_configured', 'No prompt configured for model "' . $model . '". Set one via POST /v1/model-prompts.', 422);
+    $pr = LocalDatabase::modelPrompt($model);
+}
+if ($pr === null) {
+    // No model_prompt: fall back to Store A (the Postgres namespace config). Borrow its LLM
+    // connection and pair it with the default ingest system prompt — the namespace
+    // prompt_template targets the candidate_edges contract, not the ingest contract, so it
+    // is not reused here.
+    $cfg_raw = mem_namespace_config($namespace);
+    if (mem_has_llm_connection($cfg_raw)) {
+        $pr = [
+            'model_name'        => $model,
+            'model_identifier'  => ($cfg_raw['model_identifier'] ?? '') !== '' ? $cfg_raw['model_identifier'] : $model,
+            'api_format'        => 'openai',
+            'system_prompt'     => mem_default_ingest_prompt(),
+            'base_url'          => $cfg_raw['base_url'] ?? '',
+            'api_key'           => mem_resolve_token($cfg_raw['secret_ref'] ?? null),
+            'max_tokens'        => 2048,
+            'generation_params' => json_encode(is_array($cfg_raw['generation_params'] ?? null) ? $cfg_raw['generation_params'] : []),
+        ];
+    } else {
+        json_error(
+            'model_not_configured',
+            'No prompt configured for model "' . $model . '" and no model config for namespace "'
+            . $namespace . '". Set one via POST /v1/model-prompts or POST /v1/memory/config.',
+            422
+        );
+    }
 }
 
 // --- KNOWN_SUBJECTS / KNOWN_VERBS from Postgres (so the model reuses canonical names) ---
@@ -107,8 +142,14 @@ if ($preview) {
     ]);
 }
 
-if ($pr['api_key'] === null || $pr['api_key'] === '') {
-    json_error('model_api_key_missing', 'No API key set for model "' . $model . '". Set it via POST /v1/model-prompts.', 409);
+if (($pr['api_key'] ?? null) === null || $pr['api_key'] === '') {
+    if (in_array($pr['source'] ?? null, ['catalog_explicit', 'user_choice'], true)) {
+        $msg = 'No API key stored for provider "' . ($pr['provider'] ?? '') . '".'
+             . ' Set one via PUT /v1/llm/providers/' . ($pr['provider'] ?? '') . '.';
+    } else {
+        $msg = 'No API key set for model "' . $model . '". Set it via POST /v1/model-prompts.';
+    }
+    json_error('model_api_key_missing', $msg, 409);
 }
 
 // The 0.92.0 ingest facade must be present (the model JSON is passed to it verbatim).
