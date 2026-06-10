@@ -4,6 +4,11 @@ RewriteEngine On
 RewriteCond %{HTTP:Authorization} ^(.+)$
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
 
+# /mcp  ->  mcp.php   (Model Context Protocol server endpoint — stateless Streamable HTTP,
+# POST only; requirements.md §4.15). Not under /v1: MCP clients are configured with the
+# bare /mcp URL.
+RewriteRule ^mcp$ mcp.php [QSA,L]
+
 # --- Handle routes with a NON-numeric id segment (object_kind). These must precede the
 #     generic numeric rules below. The (object_kind, object_id) handle is the canonical
 #     resource id across the graph/attribute surface (maludb_core 0.85.0+). ---
