@@ -415,8 +415,10 @@ against the real schema; the public JSON contract is preserved by aliasing in SQ
 
 | URL | File | Methods | Notes |
 |---|---|---|---|
-| `/v1/skills` | `skills.php` | GET, POST | GET query param: `visibility` (optional filter). |
-| `/v1/skills/{id}` | `skills_id.php` | GET, PATCH, DELETE | |
+| `/v1/skills` | `skills.php` | GET, POST | GET query params: `visibility`, `q`; `subject`/`verb` (0.97.0) switch to tag-aware discovery via `maludb_skill_search`. |
+| `/v1/skills/ingest` | `skills_ingest.php` | POST | Register a Claude Agent Skill bundle (maludb_core 0.97.0): files + canonical bundle hash + materiality + discovery extraction (LLM or deterministic fallback) + `maludb_skill_register`. `preview` returns the prompt/extraction without writing. |
+| `/v1/skills/{id}` | `skills_id.php` | GET, PATCH, DELETE | PATCH on a registered agent skill (bundle_hash set) rejects name/markdown/version/packaging_kind with `409 skill_content_immutable`. |
+| `/v1/skills/{id}/bundle` | `skills_id_bundle.php` | GET | Full bundle for reconstruction (files as base64; legacy markdown-only skills synthesize a one-file SKILL.md). |
 | `/v1/skills/{id}/duplicate` | `skills_id_duplicate.php` | POST | Returns the new skill object (`201`). |
 
 ### 4.9 Episodes (events) + SVO statements — maludb_core 0.82.0
