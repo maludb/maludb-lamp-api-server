@@ -595,6 +595,24 @@ function db_one_redacted(string $sql, array $params, array $redact): ?array {
  * Responses (requirements.md §1.5, §2.2, §2.3)
  * ------------------------------------------------------------------------- */
 
+/**
+ * The API error as an exception. json_error() throws this instead of echoing
+ * and exit()ing directly, so an in-process caller (the MCP dispatcher in
+ * html/mcp.php) can catch a failing operation and turn it into a tool result.
+ * For every REST endpoint nothing observable changes: an uncaught ApiException
+ * reaches handle_uncaught(), which renders byte-for-byte what json_error()
+ * used to echo (status code + {"error":{code,message}}) and exits.
+ */
+class ApiException extends RuntimeException {
+    public string $apiCode;
+    public int $status;
+    public function __construct(string $apiCode, string $message, int $status) {
+        parent::__construct($message);
+        $this->apiCode = $apiCode;
+        $this->status  = $status;
+    }
+}
+
 function json_response($data, int $status = 200): never {
     if (DEBUG_ENABLED && (($_GET['debug'] ?? '') === '1') && is_array($data)) {
         $data['meta']['debug'] = [
@@ -609,10 +627,9 @@ function json_response($data, int $status = 200): never {
 }
 
 function json_error(string $code, string $message, int $status): never {
-    http_response_code($status);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['error' => ['code' => $code, 'message' => $message]]);
-    exit;
+    // Unwinds as an exception (catchable by mcp.php); for REST the top-level
+    // handler renders the identical response json_error used to echo here.
+    throw new ApiException($code, $message, $status);
 }
 
 /* ---------------------------------------------------------------------------
@@ -748,6 +765,15 @@ function pg_error_message(Throwable $e): string {
 }
 
 function handle_uncaught(Throwable $e): void {
+    if ($e instanceof ApiException) {
+        // json_error() unwound to here: render exactly what it echoed before it
+        // became an exception (no api.log line — json_error never wrote one).
+        http_response_code($e->status);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['error' => ['code' => $e->apiCode, 'message' => $e->getMessage()]]);
+        exit;
+    }
+
     $status = 500; $code = 'internal_error'; $message = 'An unexpected error occurred.';
 
     if ($e instanceof TenantDatabaseException) {
