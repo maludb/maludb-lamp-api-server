@@ -159,12 +159,25 @@ function llm_extract_json(string $text, array $cfg): array {
 
 /**
  * Extract SVPO candidate edges from a chunk via the configured LLM. Returns the candidate_edges
- * array (the memory pipeline's contract). Callers without creds should supply pre-extracted edges
- * instead of calling this.
+ * array (the memory pipeline's contract). Dispatches by $cfg['api_format'] (openai | anthropic)
+ * so the documents path can use a connection borrowed from either model store. Callers without
+ * creds should supply pre-extracted edges instead of calling this.
  */
 function mem_extract(string $chunk, array $cfg): array {
-    $parsed = llm_extract_json($chunk, $cfg);
-    $edges  = $parsed['candidate_edges'] ?? null;
+    $tmpl   = (isset($cfg['prompt_template']) && trim((string) $cfg['prompt_template']) !== '')
+        ? (string) $cfg['prompt_template'] : mem_default_prompt();
+    $prompt = str_replace(['{{chunk}}', '{{text}}'], [$chunk, $chunk], $tmpl);
+
+    // Single-user-message completion (no system prompt — the contract lives in the template).
+    // llm_complete validates base_url/token/model and errors model_not_configured when the
+    // connection is incomplete.
+    $content = llm_complete($cfg, '', $prompt);
+
+    $parsed = llm_json_from_text($content);
+    if (!is_array($parsed)) {
+        json_error('upstream_error', 'LLM output was not valid JSON.', 502);
+    }
+    $edges = $parsed['candidate_edges'] ?? null;
     if (!is_array($edges)) {
         json_error('upstream_error', 'LLM output was not the candidate_edges contract.', 502);
     }
@@ -189,13 +202,13 @@ function llm_complete_openai(array $cfg, string $system, string $user): string {
     if ($base === '' || $token === null || $token === '' || $model === '') {
         json_error('model_not_configured', 'OpenAI base_url/api_key/model not configured.', 409);
     }
-    $gen  = is_array($cfg['generation_params'] ?? null) ? $cfg['generation_params'] : [];
+    $gen      = is_array($cfg['generation_params'] ?? null) ? $cfg['generation_params'] : [];
+    $messages = [];
+    if ($system !== '') $messages[] = ['role' => 'system', 'content' => $system];
+    $messages[] = ['role' => 'user', 'content' => $user];
     $body = array_merge([
         'model'    => $model,
-        'messages' => [
-            ['role' => 'system', 'content' => $system],
-            ['role' => 'user',   'content' => $user],
-        ],
+        'messages' => $messages,
     ], $gen);
     $resp = mem_http_post(
         rtrim($base, '/') . '/chat/completions',
@@ -217,9 +230,9 @@ function llm_complete_anthropic(array $cfg, string $system, string $user): strin
     $body = [
         'model'      => $model,
         'max_tokens' => (int) ($cfg['max_tokens'] ?? 2048),
-        'system'     => $system,
         'messages'   => [['role' => 'user', 'content' => $user]],
     ];
+    if ($system !== '') $body['system'] = $system;
     if (is_array($cfg['generation_params'] ?? null)) $body = array_merge($body, $cfg['generation_params']);
     $resp = mem_http_post(
         rtrim($base, '/') . '/v1/messages',
@@ -265,6 +278,135 @@ function mem_default_prompt(): string {
          . "{\"candidate_edges\":[{\"subject_text\":\"\",\"subject_type\":\"\",\"verb_text\":\"\","
          . "\"predicate\":[{\"attr_name\":\"\",\"value_text\":\"\"}],\"source_span\":\"\",\"confidence\":0.0}]}.\n\n"
          . "Text:\n{{chunk}}";
+}
+
+/* -------------------- per-user task → model resolution ------------------ */
+/*
+ * Effective LLM config resolution — per-user task → model → connection. Layers three sources:
+ *
+ *   1. Explicit `model` in the request body:
+ *        a. legacy model_prompts row (byte-for-byte today's behavior, incl. its own api_key), else
+ *        b. default_prompts catalog row (model, task) + the caller's provider key.
+ *   2. The user's choice — user_model_choices(user_id, task) → catalog row + provider key, with
+ *      the user's optional system_prompt and base_url overrides.
+ *   3. Nothing matched → null. Callers keep their existing legacy fallback (the 'chatgpt-4o'
+ *      model_prompts row, namespace config, env embedding, deterministic vectors) so
+ *      unconfigured tenants see today's exact errors.
+ *
+ * The returned array is shaped like a model_prompts row (the shape memory_ingest.php and
+ * skills_ingest.php already consume): model_name, model_identifier, api_format, base_url,
+ * api_key, max_tokens, generation_params (JSON string or null), system_prompt, plus
+ * "source" ('model_prompts' | 'catalog_explicit' | 'user_choice') and "provider".
+ */
+
+/** Assemble an effective config from a catalog row + the user's provider key. */
+function mem_catalog_config(int $user_id, array $row, string $source, ?string $prompt_override = null): array {
+    $key = LocalDatabase::userProviderKey($user_id, (string) $row['provider']);
+    return [
+        'model_name'        => $row['model_name'],
+        'model_identifier'  => $row['model_identifier'],
+        'api_format'        => $row['api_format'],
+        // The user's per-provider base_url override wins (e.g. self-hosted ollama).
+        'base_url'          => (($key['base_url'] ?? '') !== '') ? $key['base_url'] : $row['base_url'],
+        'api_key'           => $key['api_key'] ?? null,
+        'max_tokens'        => (int) (($row['max_tokens'] ?? 0) ?: 2048),
+        'generation_params' => $row['generation_params'] ?? null,
+        'system_prompt'     => ($prompt_override !== null && $prompt_override !== '') ? $prompt_override : ($row['system_prompt'] ?? null),
+        'provider'          => $row['provider'],
+        'source'            => $source,
+    ];
+}
+
+/** Resolve the effective LLM config for a task, or null if nothing is set. */
+function mem_resolve_task_config(int $user_id, string $task, ?string $explicit_model = null): ?array {
+    if ($explicit_model !== null && $explicit_model !== '') {
+        // 1a. Legacy model_prompts wins for explicit models — existing deployments that
+        //     configured this name see zero behavior change.
+        $pr = LocalDatabase::modelPrompt($explicit_model);
+        if ($pr !== null) {
+            return array_merge($pr, ['provider' => null, 'source' => 'model_prompts']);
+        }
+        // 1b. Catalog row for this task.
+        $row = LocalDatabase::defaultPrompt($explicit_model, $task);
+        if ($row !== null) {
+            return mem_catalog_config($user_id, $row, 'catalog_explicit');
+        }
+        return null;
+    }
+
+    // 2. The user's stored choice for this task.
+    $choice = LocalDatabase::userModelChoice($user_id, $task);
+    if ($choice !== null) {
+        $row = LocalDatabase::defaultPrompt((string) $choice['model_name'], $task);
+        if ($row !== null) {
+            return mem_catalog_config($user_id, $row, 'user_choice', $choice['system_prompt'] ?? null);
+        }
+    }
+
+    // 3. Nothing resolved — caller falls back to its legacy behavior.
+    return null;
+}
+
+/**
+ * The user's 'embed' choice as a mem_embed() cfg array; [] when unset.
+ *
+ * mem_embed falls back to MALUDB_EMBED_* env vars and then the deterministic vector when the
+ * returned array is empty or incomplete, so this never breaks an unconfigured tenant.
+ */
+function mem_resolve_embed_config(int $user_id): array {
+    $cfg = mem_resolve_task_config($user_id, 'embed');
+    if ($cfg === null || ($cfg['api_key'] ?? '') === '' || $cfg['api_key'] === null) {
+        return [];
+    }
+    return [
+        'embedding_base_url' => $cfg['base_url'],
+        'embedding_token'    => $cfg['api_key'],
+        'embedding_model'    => $cfg['model_identifier'],
+    ];
+}
+
+/* ----------------- namespace model store (Store A) helpers -------------- */
+/*
+ * Model configuration lives in two independent stores:
+ *
+ *   Store A — Postgres per-namespace config (maludb_memory_model_config).
+ *             Primary for /v1/memory/documents and /v1/memory/search.
+ *   Store B — MySQL model_prompts / default_prompts (LocalDatabase).
+ *             Primary for /v1/memory/ingest (and the skills pipeline).
+ *
+ * A tenant may have set up only one of them. These helpers let each endpoint borrow the *LLM
+ * connection* (base_url / model / token / generation_params / api_format) from the other store
+ * when its own store is empty, so a partial setup does not produce hard "model_not_configured"
+ * errors. The prompt itself is never crossed over: each endpoint keeps its own contract
+ * (candidate_edges for documents, the ingest-extraction JSON for ingest).
+ */
+
+/** Read the Postgres per-namespace model config (Store A); [] if none set. */
+function mem_namespace_config(string $namespace): array {
+    $row = db_tx_core(fn() => db_one("SELECT maludb_memory_model_config(?) AS cfg", [$namespace]));
+    if ($row && $row['cfg'] !== null) {
+        $cfg = json_decode((string) $row['cfg'], true);
+        if (is_array($cfg)) return $cfg;
+    }
+    return [];
+}
+
+/** True if a namespace config carries a usable extraction connection. */
+function mem_has_llm_connection(array $cfg): bool {
+    return trim((string) ($cfg['base_url'] ?? '')) !== ''
+        && trim((string) ($cfg['model_identifier'] ?? '')) !== '';
+}
+
+/** The ingest-contract system prompt to use when no model_prompt is configured. */
+function mem_default_ingest_prompt(): string {
+    $text = @file_get_contents(__DIR__ . '/prompts/chatgpt-4o.system.txt');
+    if (is_string($text) && trim($text) !== '') return $text;
+    return "You are a memory-extraction service. Convert the TEXT plus CONTEXT HINTS into a "
+         . "SINGLE JSON object describing the entities, events, and relationships it contains, "
+         . "ingestible directly into a knowledge graph. Output ONLY one JSON object — no prose, "
+         . "no markdown. Choose subject types from these ENTITY TYPES:\n{{ENTITY_TYPES}}\n"
+         . "and these EVENT KINDS:\n{{EVENT_KINDS}}\nUse small canonical verbs and reuse "
+         . "KNOWN_SUBJECTS / KNOWN_VERBS where they match. Do not invent details.";
 }
 
 /* ------------------------------- transport ----------------------------- */

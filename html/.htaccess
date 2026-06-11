@@ -4,6 +4,11 @@ RewriteEngine On
 RewriteCond %{HTTP:Authorization} ^(.+)$
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
 
+# /mcp  ->  mcp.php   (Model Context Protocol server endpoint — stateless Streamable HTTP,
+# POST only; requirements.md §4.15). Not under /v1: MCP clients are configured with the
+# bare /mcp URL.
+RewriteRule ^mcp$ mcp.php [QSA,L]
+
 # --- Handle routes with a NON-numeric id segment (object_kind). These must precede the
 #     generic numeric rules below. The (object_kind, object_id) handle is the canonical
 #     resource id across the graph/attribute surface (maludb_core 0.85.0+). ---
@@ -24,6 +29,17 @@ RewriteRule ^v1/graph/([a-zA-Z_][a-zA-Z0-9_-]*)$ \
 # /v1/memory/<op>  ->  memory_<op>.php   (memory pipeline: config, documents, search).
 RewriteRule ^v1/memory/([a-zA-Z_][a-zA-Z0-9_-]*)$ \
             v1/memory_$1.php [QSA,L]
+
+# /v1/llm/...  ->  llm_*.php   (per-user LLM config: catalog, provider keys, task->model
+# choices). The provider/task segments are non-numeric, so these must precede the generic
+# numeric rules below.
+RewriteRule ^v1/llm/catalog$ v1/llm_catalog.php [QSA,L]
+RewriteRule ^v1/llm/providers$ v1/llm_providers.php [QSA,L]
+RewriteRule ^v1/llm/providers/([a-zA-Z0-9_-]+)$ \
+            v1/llm_providers.php?provider=$1 [QSA,L]
+RewriteRule ^v1/llm/models$ v1/llm_models.php [QSA,L]
+RewriteRule ^v1/llm/models/([a-zA-Z0-9_-]+)$ \
+            v1/llm_models.php?task=$1 [QSA,L]
 
 # /v1/skills/ingest  ->  skills_ingest.php   (agent-skill bundle ingest, maludb_core 0.97.0).
 # Non-numeric second segment, so it must precede the generic numeric-id rules below.

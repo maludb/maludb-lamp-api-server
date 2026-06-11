@@ -10,11 +10,15 @@
  *
  *   The query embedding MUST use the same embedding model/dimension as the stored vectors —
  *   mem_embed() reads the configured/namespace model (deterministic fallback otherwise).
+ *
+ *   The search body lives in mem_search_core() (config/memory_core.php), shared with the
+ *   MCP search_memory tool (html/mcp.php). This file parses/validates and emits the response.
  */
 
 require_once __DIR__ . '/../../config/response.php';
+require_once __DIR__ . '/../../config/memory_core.php';
 
-require_auth();
+$user_id = require_auth();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Allow: POST');
@@ -37,39 +41,15 @@ if ($subject === null && $verb === null) {
 $limit     = isset($body['limit']) ? max(1, min(200, (int) $body['limit'])) : 20;
 $metric    = isset($body['metric']) && trim((string) $body['metric']) !== '' ? (string) $body['metric'] : 'cosine';
 
-// Same embedding model as ingest (from namespace config, else body/env/deterministic).
-$row = db_tx_core(fn() => db_one("SELECT maludb_memory_model_config(?) AS cfg", [$namespace]));
-$cfg = ($row && $row['cfg'] !== null) ? (array) json_decode($row['cfg'], true) : [];
-$embedding_model = isset($body['embedding_model']) && trim((string) $body['embedding_model']) !== ''
-    ? (string) $body['embedding_model']
-    : ($cfg['embedding_model'] ?? (getenv('MALUDB_EMBED_MODEL') ?: 'maludb-local-dev'));
-
-$vector = mem_vector_literal(mem_embed($query, ['embedding_model' => $embedding_model]));
-
-$rows = db_tx_core(fn() => db_query(
-    "SELECT chunk_id, statement_id, document_id, source_text, distance, similarity,
-            rank_no, subject_name, verb_name
-       FROM maludb_memory_search(
-                p_query_embedding => ?::maludb_core.malu_vector,
-                p_subject         => ?,
-                p_verb            => ?,
-                p_namespace       => ?,
-                p_limit           => ?,
-                p_metric          => ?)",
-    [$vector, $subject, $verb, $namespace, $limit, $metric]
-));
-foreach ($rows as &$r) {
-    foreach (['chunk_id', 'statement_id', 'document_id', 'rank_no'] as $k) {
-        $r[$k] = $r[$k] === null ? null : (int) $r[$k];
-    }
-    foreach (['distance', 'similarity'] as $k) {
-        $r[$k] = $r[$k] === null ? null : (float) $r[$k];
-    }
-}
-unset($r);
-
-json_response([
+$payload = mem_search_core($user_id, [
+    'query'           => $query,
+    'subject'         => $subject,
+    'verb'            => $verb,
     'namespace'       => $namespace,
-    'embedding_model' => $embedding_model,
-    'results'         => $rows,
+    'limit'           => $limit,
+    'metric'          => $metric,
+    'embedding_model' => isset($body['embedding_model']) && trim((string) $body['embedding_model']) !== ''
+        ? (string) $body['embedding_model'] : null,
 ]);
+
+json_response($payload);

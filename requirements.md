@@ -276,7 +276,7 @@ To keep "one file per endpoint" practical, the only shared application code live
 | `require_auth()` | `(): int` | Validate bearer token, return `user_id` or emit `401` + exit. |
 | `body_json()` | `(): array` | Decode `php://input` as JSON; emit `400` on malformed. |
 | `json_response()` | `($data, int $status = 200): never` | Emit JSON + status + exit. Adds `meta.debug` if applicable. |
-| `json_error()` | `(string $code, string $message, int $status): never` | Emit standard error body + exit. |
+| `json_error()` | `(string $code, string $message, int $status): never` | Throw `ApiException`; uncaught, the top-level handler emits the standard error body + exit (byte-identical to the former direct echo). Catchable in-process by the MCP dispatcher (§4.15). |
 | `db_query()` | `(string $sql, array $params = []): array` | Prepare/execute/log/`fetchAll`. |
 | `db_exec()` | `(string $sql, array $params = []): int` | Prepare/execute/log; return affected row count. |
 | `db_one()` | `(string $sql, array $params = []): ?array` | Prepare/execute/log/`fetch` first row (or `null`). |
@@ -538,6 +538,82 @@ live in `config/llm.php` (`llm_complete` dispatches on `api_format`).
 > **No-creds path:** `mem_embed()` falls back to a deterministic local embedding and the process
 > endpoint accepts pre-extracted `edges`, so upload→ingest→search round-trips without live models.
 > Async path (`request_extraction`/`harvest_extractions`) exists but is out of scope (no worker).
+
+### 4.14 Per-user LLM configuration — /v1/llm/* (seeded catalog, provider keys, model choices)
+
+`tests/local_db_setup.php` seeds a `default_prompts` catalog in MySQL (one row per model × task —
+OpenAI, Anthropic, Google, xAI, DeepSeek, Ollama; tasks `extract` / `skill_extract` / `embed`;
+prompts from `config/prompts/extract.rich.system.txt` / `extract.simple.system.txt` /
+`skill-extract.system.txt`; `INSERT IGNORE`, so re-running never overwrites operator edits). A
+bearer-token holder then only stores a provider key and picks a model per task — no raw Postgres
+credentials (unlike `/v1/model-prompts`). Keys and choices are keyed by `user_id` (all of a
+user's tokens share them) in `user_provider_keys` / `user_model_choices`.
+
+| URL | File | Methods | Notes |
+|---|---|---|---|
+| `/v1/llm/catalog` | `llm_catalog.php` | GET | The seeded models × tasks with the caller's state (`key_set`, `is_choice`). Prompt text not returned (only `has_system_prompt`). |
+| `/v1/llm/providers` | `llm_providers.php` | GET | The caller's stored providers — the key value is **never** returned, only `key_set`. |
+| `/v1/llm/providers/{provider}` | `llm_providers.php` | PUT, DELETE | PUT `{api_key, base_url?}` — `api_key` required on first set (400); omitted on update preserves the stored key (COALESCE, like `/v1/model-prompts`); unknown provider → 422 listing the known ones. DELETE → 404 when none stored. |
+| `/v1/llm/models` | `llm_models.php` | GET | One entry per task with the **effective** model; `chosen:false` rows show the legacy/server default (`chatgpt-4o` for extract; null for skill_extract/embed). |
+| `/v1/llm/models/{task}` | `llm_models.php` | PUT, DELETE | PUT `{model_name, system_prompt?}` — `(model_name, task)` must exist in the catalog (422 → see GET /v1/llm/catalog); allowed before a key is stored (the response carries a `warning`). DELETE reverts to the server default (404 when no row). |
+
+The pipelines resolve their model via `mem_resolve_task_config()` (config/llm.php), in order:
+**explicit `model` in the body** (legacy `model_prompts` row first — byte-for-byte today's
+behavior — then the catalog row + the caller's provider key) → **the user's choice**
+(`user_model_choices` + key, with optional per-user system-prompt/base_url overrides) → **null**,
+upon which each endpoint keeps its exact legacy fallback (the `chatgpt-4o` model_prompts row +
+namespace config for `/v1/memory/ingest`; deterministic discovery for `/v1/skills/ingest`;
+env/deterministic embedding via `mem_resolve_embed_config()` for documents/search). A missing
+provider key on a catalog-resolved model → **409 `model_api_key_missing`** pointing at
+`PUT /v1/llm/providers/{provider}`. Regression curls: `tests/llm_config_curls.sh`.
+
+### 4.15 MCP server endpoint — POST /mcp (Model Context Protocol, stateless Streamable HTTP)
+
+MCP clients (Claude Code, Claude Desktop, hosted agents) use MaluDB as long-term memory with
+nothing but this URL and a Bearer token — the same tokens as the REST API (§1.4), so the
+caller's per-user LLM config (§4.14) applies to extraction:
+
+```bash
+claude mcp add --transport http maludb https://HOST/mcp \
+  --header "Authorization: Bearer $TOKEN"
+```
+
+| URL | File | Methods | Notes |
+|---|---|---|---|
+| `/mcp` | `mcp.php` (in `html/`, not `html/v1/`) | POST | JSON-RPC 2.0 over single JSON responses (MCP spec 2025-06-18, also accepts 2025-03-26). Stateless: no sessions, no SSE, no batches (array body → `-32600`). Anything but POST → 405 + `Allow: POST`. Notifications (no `id`) → HTTP 202, empty. Methods: `initialize`, `ping`, `tools/list`, `tools/call`; unknown → `-32601`. |
+
+**Eight tools** (the registry — names, schemas, descriptions, annotations — is a cross-server
+contract shared verbatim with the Python and Fastify servers):
+
+- `store_memory` *(write)* — note → LLM extraction → knowledge graph (`mem_ingest_core`).
+- `search_memory` — semantic vector search (`mem_search_core`); a missing subject/verb
+  pre-filter returns an `isError` result listing matching subjects so the agent self-corrects.
+- `find_subjects` — list canonical entities (grounding for the other tools).
+- `explore_subject` — name/id → `maludb_graph_neighbors` (depth 1) / `maludb_graph_walk`
+  (depth 2–3); a non-unique name match → `ambiguous_subject` listing the candidates.
+- `store_document` *(write)* — chunk + extract + embed + ingest (`mem_documents_core`).
+- `get_document` — document metadata + tags by id.
+- `find_skills` / `get_skill` — agent-skill discovery (§4.8); `get_skill` returns metadata,
+  the SKILL.md markdown, and the bundle file LISTING only (full bundles stay on
+  `GET /v1/skills/{id}/bundle`).
+
+**Error semantics.** Protocol failures use JSON-RPC error codes (`-32700` parse, `-32600`
+invalid request, `-32601` unknown method, `-32602` unknown tool / missing or invalid
+argument). Tool *execution* failures are JSON-RPC **successes** whose single text content
+block carries the standard §2.3 error JSON plus `isError: true` — `ApiException` maps to its
+code/message; `PDOException` is classified by SQLSTATE (exact code, then class, e.g.
+`23505 → conflict`, `42501 → insufficient_privilege`) and includes the `sqlstate`.
+
+**Security.** A present `Origin` header must be localhost or the request's own host
+(DNS-rebinding guard; else 403 `origin_forbidden`); an `MCP-Protocol-Version` header naming
+an unsupported version → 400 `unsupported_protocol_version`; missing/invalid token → 401
+with the standard error body.
+
+The pipeline tools call the shared cores in `config/memory_core.php` (the bodies of the
+§4.13 endpoints, extracted so REST and MCP share one implementation — no HTTP self-calls);
+the read tools carry their own literal SQL in `mcp.php` per §3's traceability rule.
+Smoke/regression: `tests/mcp_curls.sh` (live server) and `php tests/mcp_protocol_test.php`
+(protocol layer, no Apache/MySQL needed).
 
 ### 4.10 List denormalization
 

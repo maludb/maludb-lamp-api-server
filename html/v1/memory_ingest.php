@@ -2,8 +2,13 @@
 /**
  * /v1/memory/ingest  (text → LLM extraction → memory ingest; per-model prompt, OpenAI + Anthropic)
  *
- *   POST  Body: { text (required), model? (default 'chatgpt-4o'), hints? (array of
+ *   POST  Body: { text (required), model?, hints? (array of
  *                 {"subject-type","subject-name"}), namespace?, preview? }
+ *
+ *   Model resolution order: explicit `model` (legacy model_prompts first, then the seeded
+ *   default_prompts catalog + the caller's provider key) → the user's 'extract' choice
+ *   (PUT /v1/llm/models/extract) → the legacy default (the 'chatgpt-4o' model_prompts row) →
+ *   the namespace config (Store A; connection only, paired with the default ingest prompt).
  *
  *   Contract (per the GPT-4o memory-extraction prompt): the model is given the stored SYSTEM
  *   prompt + a USER message built from the TEXT, the HINTS, and the schema's current
@@ -14,11 +19,15 @@
  *
  *   preview=true returns the assembled SYSTEM + USER messages without calling the model or
  *   writing — verify the prompt / test without live model credentials.
+ *
+ *   The pipeline body lives in mem_ingest_core() (config/memory_core.php), shared with the
+ *   MCP store_memory tool (html/mcp.php). This file parses/validates and emits the response.
  */
 
 require_once __DIR__ . '/../../config/response.php';
+require_once __DIR__ . '/../../config/memory_core.php';
 
-require_auth();
+$user_id = require_auth();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Allow: POST');
@@ -30,8 +39,8 @@ $body = body_json();
 $text = isset($body['text']) ? (string) $body['text'] : '';
 if (trim($text) === '') json_error('missing_field', 'Field "text" is required.', 400);
 
-$model     = isset($body['model']) && trim((string) $body['model']) !== '' ? (string) $body['model'] : 'chatgpt-4o';
-$namespace = isset($body['namespace']) && trim((string) $body['namespace']) !== '' ? (string) $body['namespace'] : 'default';
+$explicit_model = isset($body['model']) && trim((string) $body['model']) !== '' ? trim((string) $body['model']) : null;
+$namespace      = isset($body['namespace']) && trim((string) $body['namespace']) !== '' ? (string) $body['namespace'] : 'default';
 $preview   = !empty($body['preview']);
 
 // HINTS: a list of {"subject-type","subject-name"}. Accept an array (preferred); tolerate a
@@ -45,115 +54,12 @@ if (isset($body['hints']) && is_array($body['hints'])) {
     $hints_json = '[]';
 }
 
-// --- per-model prompt + LLM connection (MySQL) ---
-$pr = LocalDatabase::modelPrompt($model);
-if ($pr === null) {
-    json_error('model_not_configured', 'No prompt configured for model "' . $model . '". Set one via POST /v1/model-prompts.', 422);
-}
-
-// --- KNOWN_SUBJECTS / KNOWN_VERBS from Postgres (so the model reuses canonical names) ---
-$subj_rows = db_query("SELECT canonical_name AS name, subject_type AS type FROM maludb_subject ORDER BY canonical_name");
-$verb_rows = db_query("SELECT canonical_name FROM maludb_verb ORDER BY canonical_name");
-$known_subjects_json = json_encode(array_map(fn($r) => ['name' => $r['name'], 'type' => $r['type']], $subj_rows), JSON_UNESCAPED_SLASHES);
-$known_verbs_json    = json_encode(array_map(fn($r) => $r['canonical_name'], $verb_rows), JSON_UNESCAPED_SLASHES);
-
-// --- SUBJECT TYPE CATALOG (0.96.0): render the entity/event vocabularies straight from the
-//     tenant catalog so the prompt's allowed types can never drift from what the ingest accepts.
-//     The maludb_subject_type facade exposes `category` once a tenant has re-run
-//     enable_memory_schema(); until then we fall back to the maludb_core base table, which
-//     carries `category` immediately after the 0.96.0 extension upgrade. ---
-try {
-    $type_rows = db_query(
-        "SELECT category, subject_type, description FROM maludb_subject_type ORDER BY category, sort_order"
-    );
-} catch (PDOException $e) {
-    // single-quoted on purpose: the `$` in malu$svpor_* must not be parsed as a PHP variable
-    $type_rows = db_query(
-        'SELECT category, subject_type, description FROM maludb_core.malu$svpor_subject_type ORDER BY category, sort_order'
-    );
-}
-$entity_lines = [];
-$event_lines  = [];
-foreach ($type_rows as $r) {
-    $desc = (isset($r['description']) && trim((string) $r['description']) !== '') ? ' — ' . $r['description'] : '';
-    $line = '  - ' . $r['subject_type'] . $desc;
-    if (($r['category'] ?? 'entity') === 'event') { $event_lines[] = $line; } else { $entity_lines[] = $line; }
-}
-// Fallbacks keep the model inside the catalog even if a list comes back empty.
-$entity_block = $entity_lines !== [] ? implode("\n", $entity_lines) : '  - other';
-$event_block  = $event_lines  !== [] ? implode("\n", $event_lines)  : '  - task';
-
-// --- build the messages ---
-// Substitute the rendered catalog into the stored SYSTEM prompt. strtr is a no-op for a legacy
-// prompt with no {{ENTITY_TYPES}}/{{EVENT_KINDS}} placeholders, so this stays backward-compatible.
-$system  = strtr($pr['system_prompt'], [
-    '{{ENTITY_TYPES}}' => $entity_block,
-    '{{EVENT_KINDS}}'  => $event_block,
+$payload = mem_ingest_core($user_id, [
+    'text'           => $text,
+    'hints_json'     => $hints_json,
+    'namespace'      => $namespace,
+    'explicit_model' => $explicit_model,
+    'preview'        => $preview,
 ]);
-$user    = "TEXT:\n{$text}\n\nHINTS:\n{$hints_json}\n\nKNOWN_SUBJECTS:\n{$known_subjects_json}\n\nKNOWN_VERBS:\n{$known_verbs_json}\n";
 
-if ($preview) {
-    json_response([
-        'model'         => $model,
-        'api_format'    => $pr['api_format'],
-        'system_prompt' => $system,
-        'user_message'  => $user,
-        'counts'        => [
-            'known_subjects' => count($subj_rows),
-            'known_verbs'    => count($verb_rows),
-            'entity_types'   => count($entity_lines),
-            'event_kinds'    => count($event_lines),
-        ],
-    ]);
-}
-
-if ($pr['api_key'] === null || $pr['api_key'] === '') {
-    json_error('model_api_key_missing', 'No API key set for model "' . $model . '". Set it via POST /v1/model-prompts.', 409);
-}
-
-// The 0.92.0 ingest facade must be present (the model JSON is passed to it verbatim).
-$has_facade = db_one("SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = 'maludb_memory_ingest_extraction') AS ok");
-if (!$has_facade || !$has_facade['ok']) {
-    json_error('ingest_unavailable', 'maludb_memory_ingest_extraction is not available in this database (requires maludb_core 0.92.0).', 501);
-}
-
-// --- call the LLM (OpenAI or Anthropic shape) and parse the extraction JSON ---
-$cfg = [
-    'api_format'        => $pr['api_format'],
-    'base_url'          => $pr['base_url'],
-    'model_identifier'  => ($pr['model_identifier'] !== null && $pr['model_identifier'] !== '') ? $pr['model_identifier'] : $model,
-    'token'             => $pr['api_key'],
-    'max_tokens'        => (int) $pr['max_tokens'],
-    'generation_params' => ($pr['generation_params'] !== null && $pr['generation_params'] !== '') ? json_decode($pr['generation_params'], true) : [],
-];
-$content    = llm_complete($cfg, $system, $user);
-$extraction = llm_json_from_text($content);
-if ($extraction === null) {
-    json_error('upstream_error', 'LLM output was not a JSON object.', 502);
-}
-
-// --- upload the text + ingest the extraction (one transaction) ---
-$result = db_tx_core(function () use ($text, $extraction) {
-    $doc = db_one(
-        "SELECT maludb_upload_document(p_title => ?, p_content_text => ?, p_source_type => 'document') AS id",
-        [mb_substr(trim($text), 0, 80), $text]
-    );
-    $document_id = (int) $doc['id'];
-    // LLM-derived → stage as 'suggested' (review queue), consistent with the rest of the pipeline
-    // (the facade itself defaults to 'accepted'). The model JSON is passed verbatim.
-    $row = db_one(
-        "SELECT maludb_memory_ingest_extraction(
-                    p_extraction => ?::jsonb, p_source_kind => 'document',
-                    p_source_id => ?, p_provenance => 'suggested') AS result",
-        [json_encode($extraction), $document_id]
-    );
-    return ['document_id' => $document_id, 'result' => ($row['result'] !== null ? json_decode($row['result']) : null)];
-});
-
-json_response([
-    'document_id' => $result['document_id'],
-    'model'       => $model,
-    'api_format'  => $pr['api_format'],
-    'namespace'   => $namespace,
-    'result'      => $result['result'],
-], 201);
+json_response($payload, $preview ? 200 : 201);

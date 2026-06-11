@@ -55,6 +55,59 @@ $seed = $my->prepare(
 $seed->execute([$default_prompt, $gen]);
 echo "default chatgpt-4o prompt seeded/refreshed from config/prompts/chatgpt-4o.system.txt\n";
 
+// Seed the default_prompts catalog (models × tasks) from the versioned prompt files. INSERT
+// IGNORE on UNIQUE (model_name, task): idempotent and additive — upgrades add new rows but never
+// overwrite a row an operator hand-edited. Each chat model gets two rows ('extract' with its
+// extract prompt, 'skill_extract' with skill-extract.system.txt); embed models get one promptless
+// 'embed' row. Mirrors app/llm_catalog.py in the Python server (identical seed matrix).
+$rich   = file_get_contents(__DIR__ . '/../config/prompts/extract.rich.system.txt');
+$simple = file_get_contents(__DIR__ . '/../config/prompts/extract.simple.system.txt');
+$skill  = file_get_contents(__DIR__ . '/../config/prompts/skill-extract.system.txt');
+
+$GP_JSON = '{"temperature": 0.1, "response_format": {"type": "json_object"}}';
+$GP_TEMP = '{"temperature": 0.1}';
+
+// Chat models: [provider, model_name, model_identifier, api_format, base_url,
+//               extract_prompt, max_tokens, generation_params]
+$CHAT_MODELS = [
+    ['openai',    'gpt-4o',        'gpt-4o',            'openai',    'https://api.openai.com/v1',                                $rich,   2048, $GP_JSON],
+    ['openai',    'gpt-4o-mini',   'gpt-4o-mini',       'openai',    'https://api.openai.com/v1',                                $simple, 2048, $GP_JSON],
+    ['anthropic', 'claude-opus',   'claude-opus-4-8',   'anthropic', 'https://api.anthropic.com',                                $rich,   4096, null],
+    ['anthropic', 'claude-sonnet', 'claude-sonnet-4-6', 'anthropic', 'https://api.anthropic.com',                                $rich,   4096, null],
+    ['anthropic', 'claude-haiku',  'claude-haiku-4-5',  'anthropic', 'https://api.anthropic.com',                                $simple, 4096, null],
+    ['google',    'gemini-flash',  'gemini-2.5-flash',  'openai',    'https://generativelanguage.googleapis.com/v1beta/openai',  $simple, 2048, $GP_JSON],
+    ['xai',       'grok',          'grok-4',            'openai',    'https://api.x.ai/v1',                                      $rich,   2048, $GP_JSON],
+    ['deepseek',  'deepseek-chat', 'deepseek-chat',     'openai',    'https://api.deepseek.com/v1',                              $rich,   2048, $GP_JSON],
+    ['ollama',    'ollama-local',  'llama3.1',          'openai',    'http://localhost:11434/v1',                                $simple, 2048, $GP_TEMP],
+];
+// Embedding models: [provider, model_name, model_identifier, base_url] — api_format 'openai'
+// (the only embeddings shape we speak); no prompt.
+$EMBED_MODELS = [
+    ['openai', 'text-embedding-3-small', 'text-embedding-3-small', 'https://api.openai.com/v1'],
+    ['ollama', 'ollama-embed',           'nomic-embed-text',       'http://localhost:11434/v1'],
+];
+
+$SEED = [];
+foreach ($CHAT_MODELS as [$provider, $name, $ident, $fmt, $base, $extract_prompt, $max_tokens, $gp]) {
+    $SEED[] = [$provider, $name, $ident, $fmt, $base, 'extract',       $extract_prompt, $max_tokens, $gp];
+    $SEED[] = [$provider, $name, $ident, $fmt, $base, 'skill_extract', $skill,          $max_tokens, $gp];
+}
+foreach ($EMBED_MODELS as [$provider, $name, $ident, $base]) {
+    $SEED[] = [$provider, $name, $ident, 'openai', $base, 'embed', null, 0, null];
+}
+
+$catalog = $my->prepare(
+    "INSERT IGNORE INTO default_prompts
+         (provider, model_name, model_identifier, api_format, base_url, task, system_prompt, max_tokens, generation_params)
+     VALUES (?,?,?,?,?,?,?,?,?)"
+);
+$catalog_added = 0;
+foreach ($SEED as $row) {
+    $catalog->execute($row);
+    $catalog_added += $catalog->rowCount() > 0 ? 1 : 0;
+}
+echo "default_prompts catalog seeded: $catalog_added new row(s) of " . count($SEED) . "\n";
+
 // 2. migrate Postgres api_tokens → MySQL users (by hash; attach Postgres creds + role)
 $tokens = $pg->query("SELECT user_id, token_hash, expires_at FROM api_tokens")->fetchAll();
 $ins = $my->prepare(
