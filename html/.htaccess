@@ -30,6 +30,11 @@ RewriteRule ^v1/graph/([a-zA-Z_][a-zA-Z0-9_-]*)$ \
 RewriteRule ^v1/memory/([a-zA-Z_][a-zA-Z0-9_-]*)$ \
             v1/memory_$1.php [QSA,L]
 
+# /v1/datamodel/<op>  ->  datamodel_<op>.php   (data-model graph: refresh, describe). The op
+# segment is non-numeric, so the generic 2-segment numeric rule below would never route it.
+RewriteRule ^v1/datamodel/([a-zA-Z_][a-zA-Z0-9_-]*)$ \
+            v1/datamodel_$1.php [QSA,L]
+
 # /v1/llm/...  ->  llm_*.php   (per-user LLM config: catalog, provider keys, task->model
 # choices). The provider/task segments are non-numeric, so these must precede the generic
 # numeric rules below.
